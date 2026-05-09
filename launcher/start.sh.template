@@ -291,7 +291,7 @@ prepend_managed_node_runtime_to_path() {
     export CODEX_MANAGED_NODE_RUNTIME_DIR="$SCRIPT_DIR/resources/node-runtime"
 }
 
-browser_use_plugin_version() {
+bundled_plugin_version() {
     local plugin_json="$1"
 
     python3 - "$plugin_json" <<'PY'
@@ -338,7 +338,7 @@ sync_browser_use_bundled_plugin_cache() {
             echo "Browser Use bundled marketplace sync failed; continuing with existing marketplace cache."
     fi
 
-    version="$(browser_use_plugin_version "$plugin_json" 2>/dev/null || true)"
+    version="$(bundled_plugin_version "$plugin_json" 2>/dev/null || true)"
     [ -n "$version" ] || return 0
 
     cache_root="$codex_home/plugins/cache/openai-bundled/browser-use"
@@ -362,6 +362,67 @@ sync_browser_use_bundled_plugin_cache() {
     else
         rm -rf "$tmp_plugin"
         echo "Browser Use plugin cache sync failed; continuing with existing cache."
+    fi
+}
+
+sync_computer_use_bundled_plugin_cache() {
+    local source_plugin="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/computer-use"
+    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
+    local plugin_json="$source_plugin/.codex-plugin/plugin.json"
+    local source_backend="$source_plugin/bin/codex-computer-use-linux"
+    local source_cosmic_helper="$source_plugin/bin/codex-computer-use-cosmic"
+    local codex_home="${CODEX_HOME:-$HOME/.codex}"
+    local version
+    local cache_root
+    local cache_plugin
+    local cache_backend
+    local cache_cosmic_helper
+    local cache_parent
+    local tmp_plugin
+    local marketplace_root
+    local marketplace_plugins_dir
+
+    [ -f "$plugin_json" ] || return 0
+    [ -f "$source_backend" ] || return 0
+    [ -f "$source_cosmic_helper" ] || return 0
+
+    marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
+    marketplace_plugins_dir="$marketplace_root/.agents/plugins"
+    if [ -f "$source_marketplace" ]; then
+        mkdir -p "$marketplace_plugins_dir"
+        rm -f "$marketplace_plugins_dir/marketplace.json"
+        cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
+            chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
+            echo "Computer Use bundled marketplace sync failed; continuing with existing marketplace cache."
+    fi
+
+    version="$(bundled_plugin_version "$plugin_json" 2>/dev/null || true)"
+    [ -n "$version" ] || return 0
+
+    cache_root="$codex_home/plugins/cache/openai-bundled/computer-use"
+    cache_plugin="$cache_root/$version"
+    cache_backend="$cache_plugin/bin/codex-computer-use-linux"
+    cache_cosmic_helper="$cache_plugin/bin/codex-computer-use-cosmic"
+
+    if [ -f "$cache_backend" ] && [ -f "$cache_cosmic_helper" ] && \
+        cmp -s "$source_backend" "$cache_backend" && \
+        cmp -s "$source_cosmic_helper" "$cache_cosmic_helper"; then
+        return 0
+    fi
+
+    cache_parent="$(dirname "$cache_plugin")"
+    tmp_plugin="$cache_parent/.computer-use-$version.tmp.$$"
+    rm -rf "$tmp_plugin"
+    mkdir -p "$cache_parent"
+
+    if cp -R "$source_plugin" "$tmp_plugin"; then
+        find "$tmp_plugin" -type f -name '*:com.apple.*' -delete
+        rm -rf "$cache_plugin"
+        mv "$tmp_plugin" "$cache_plugin"
+        echo "Computer Use plugin cache synced from bundled resources: $cache_plugin"
+    else
+        rm -rf "$tmp_plugin"
+        echo "Computer Use plugin cache sync failed; continuing with existing cache."
     fi
 }
 
@@ -1243,6 +1304,7 @@ fi
 export_packaged_runtime_env
 if needs_cold_start; then
     sync_browser_use_bundled_plugin_cache
+    sync_computer_use_bundled_plugin_cache
 fi
 resolve_browser_use_runtime_env
 

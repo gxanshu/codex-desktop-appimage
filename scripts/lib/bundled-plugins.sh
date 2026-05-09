@@ -22,6 +22,7 @@ find_cargo_for_linux_computer_use() {
 build_linux_computer_use_backend() {
     local crate_dir="$SCRIPT_DIR/computer-use-linux"
     local backend_binary="$SCRIPT_DIR/target/release/codex-computer-use-linux"
+    local cosmic_helper_binary="$SCRIPT_DIR/target/release/codex-computer-use-cosmic"
     local cargo_cmd=""
 
     if [ ! -d "$crate_dir" ]; then
@@ -45,13 +46,20 @@ build_linux_computer_use_backend() {
         return 1
     }
 
-    echo "$backend_binary"
+    [ -x "$cosmic_helper_binary" ] || {
+        warn "Linux Computer Use COSMIC helper binary missing after build: $cosmic_helper_binary"
+        return 1
+    }
+
+    printf '%s\n%s\n' "$backend_binary" "$cosmic_helper_binary"
 }
 
 stage_linux_computer_use_plugin() {
     local target_plugins="$1"
     local plugin_template="$SCRIPT_DIR/plugins/openai-bundled/plugins/computer-use"
+    local build_outputs=""
     local backend_binary=""
+    local cosmic_helper_binary=""
     local target_plugin="$target_plugins/computer-use"
 
     if [ ! -d "$plugin_template" ]; then
@@ -59,16 +67,20 @@ stage_linux_computer_use_plugin() {
         return 1
     fi
 
-    if ! backend_binary="$(build_linux_computer_use_backend)"; then
+    if ! build_outputs="$(build_linux_computer_use_backend)"; then
         return 1
     fi
+    backend_binary="$(printf '%s\n' "$build_outputs" | sed -n '1p')"
+    cosmic_helper_binary="$(printf '%s\n' "$build_outputs" | sed -n '2p')"
 
     rm -rf "$target_plugin"
     mkdir -p "$target_plugin"
     cp -R "$plugin_template/." "$target_plugin/"
     mkdir -p "$target_plugin/bin"
     cp "$backend_binary" "$target_plugin/bin/codex-computer-use-linux"
+    cp "$cosmic_helper_binary" "$target_plugin/bin/codex-computer-use-cosmic"
     chmod 0755 "$target_plugin/bin/codex-computer-use-linux"
+    chmod 0755 "$target_plugin/bin/codex-computer-use-cosmic"
 
     if [ -f "$ICON_SOURCE" ]; then
         mkdir -p "$target_plugin/assets"
