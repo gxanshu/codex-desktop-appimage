@@ -1,3 +1,4 @@
+use crate::cosmic_helper;
 use crate::diagnostics::hydrate_session_bus_env;
 use crate::terminal::{enrich_terminal_windows, TerminalWindowContext};
 use anyhow::{bail, Context, Result};
@@ -16,11 +17,12 @@ use zbus::{zvariant::OwnedValue, Proxy};
 
 pub const GNOME_SHELL_INTROSPECT_BACKEND: &str = "gnome-shell-introspect";
 pub const GNOME_SHELL_EXTENSION_BACKEND: &str = "gnome-shell-extension";
+pub const COSMIC_WAYLAND_BACKEND: &str = "cosmic-wayland";
 pub const KWIN_BACKEND: &str = "kwin";
 pub const HYPRLAND_BACKEND: &str = "hyprland";
 pub const GNOME_SHELL_EXTENSION_SERVICE: &str = "com.openai.Codex.WindowControl";
 pub const GNOME_SHELL_EXTENSION_OBJECT_PATH: &str = "/com/openai/Codex/WindowControl";
-pub const WINDOW_PERMISSION_HINT: &str = "Computer Use could not access a supported window list backend. Targeted window input requires session-bus access plus GNOME Shell Introspect, the Codex GNOME Shell extension, KWin/Plasma DBus scripting, or Hyprland hyprctl. On GNOME, run setup_window_targeting to install the extension backend.";
+pub const WINDOW_PERMISSION_HINT: &str = "Computer Use could not access a supported window list backend. Targeted window input requires session-bus access plus GNOME Shell Introspect, the Codex GNOME Shell extension, the COSMIC Wayland helper, KWin/Plasma DBus scripting, or Hyprland hyprctl. On GNOME, run setup_window_targeting to install the extension backend.";
 const FOCUS_VERIFY_ATTEMPTS: usize = 6;
 const FOCUS_VERIFY_DELAY: Duration = Duration::from_millis(50);
 const KWIN_SCRIPT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -138,13 +140,16 @@ pub async fn list_windows() -> Result<Vec<WindowInfo>> {
         Ok(windows) => Ok(windows),
         Err(extension_error) => match list_gnome_shell_introspect_windows().await {
             Ok(windows) => Ok(windows),
-            Err(introspect_error) => match list_kwin_windows().await {
+            Err(introspect_error) => match list_cosmic_helper_windows() {
                 Ok(windows) => Ok(windows),
-                Err(kwin_error) => match list_hyprland_windows() {
+                Err(cosmic_error) => match list_kwin_windows().await {
                     Ok(windows) => Ok(windows),
-                    Err(hyprland_error) => Err(anyhow::anyhow!(
-                        "Codex GNOME Shell extension failed: {extension_error:#}; GNOME Shell Introspect failed: {introspect_error:#}; KWin failed: {kwin_error:#}; Hyprland failed: {hyprland_error:#}"
-                    )),
+                    Err(kwin_error) => match list_hyprland_windows() {
+                        Ok(windows) => Ok(windows),
+                        Err(hyprland_error) => Err(anyhow::anyhow!(
+                            "Codex GNOME Shell extension failed: {extension_error:#}; GNOME Shell Introspect failed: {introspect_error:#}; COSMIC helper failed: {cosmic_error:#}; KWin failed: {kwin_error:#}; Hyprland failed: {hyprland_error:#}"
+                        )),
+                    },
                 },
             },
         },
@@ -189,6 +194,28 @@ pub async fn list_extension_windows() -> Result<Vec<WindowInfo>> {
     windows.sort_by_key(|window| window.window_id);
     enrich_terminal_windows(&mut windows);
     Ok(windows)
+}
+
+fn list_cosmic_helper_windows() -> Result<Vec<WindowInfo>> {
+    let json = cosmic_helper::list_windows_json()?;
+    let mut windows: Vec<WindowInfo> =
+        serde_json::from_str(&json).context("COSMIC helper returned invalid list-windows JSON")?;
+    for window in &mut windows {
+        window.backend = COSMIC_WAYLAND_BACKEND.to_string();
+    }
+    windows.sort_by_key(|window| window.window_id);
+    enrich_terminal_windows(&mut windows);
+    Ok(windows)
+}
+
+fn focused_cosmic_helper_window() -> Result<Option<WindowInfo>> {
+    let json = cosmic_helper::focused_window_json()?;
+    let mut window: Option<WindowInfo> = serde_json::from_str(&json)
+        .context("COSMIC helper returned invalid focused-window JSON")?;
+    if let Some(window) = window.as_mut() {
+        window.backend = COSMIC_WAYLAND_BACKEND.to_string();
+    }
+    Ok(window)
 }
 
 fn list_hyprland_windows() -> Result<Vec<WindowInfo>> {
@@ -244,6 +271,11 @@ pub async fn focus_window_target(target: &WindowTarget) -> Result<WindowFocusRes
         activate_hyprland_window(requested_window.window_id)?;
     } else if requested_window.backend == KWIN_BACKEND {
         activate_kwin_window(requested_window.window_id).await?;
+    } else if requested_window.backend == COSMIC_WAYLAND_BACKEND {
+        let activation = cosmic_helper::activate_window(requested_window.window_id)?;
+        if !activation.ok {
+            bail!("COSMIC helper refused activation: {}", activation.detail);
+        }
     } else if requested_window.backend == GNOME_SHELL_EXTENSION_BACKEND {
         activate_extension_window(requested_window.window_id).await?;
     } else {
@@ -280,11 +312,12 @@ pub async fn focus_window_target(target: &WindowTarget) -> Result<WindowFocusRes
 fn ensure_backend_can_focus_target(target: &WindowTarget, window: &WindowInfo) -> Result<()> {
     if target.requires_exact_focus()
         && window.backend != GNOME_SHELL_EXTENSION_BACKEND
+        && window.backend != COSMIC_WAYLAND_BACKEND
         && window.backend != KWIN_BACKEND
         && window.backend != HYPRLAND_BACKEND
     {
         bail!(
-            "Exact window targeting requires the Codex GNOME Shell extension, KWin, or Hyprland backend; {} can list the matched window but cannot activate a specific window safely.",
+            "Exact window targeting requires the Codex GNOME Shell extension, COSMIC helper, KWin, or Hyprland backend; {} can list the matched window but cannot activate a specific window safely.",
             window.backend
         );
     }
@@ -292,6 +325,12 @@ fn ensure_backend_can_focus_target(target: &WindowTarget, window: &WindowInfo) -
 }
 
 async fn current_focused_window() -> Result<Option<WindowInfo>> {
+    if let Ok(window) = focused_cosmic_helper_window() {
+        if window.is_some() {
+            return Ok(window);
+        }
+    }
+
     Ok(list_windows()
         .await?
         .into_iter()
@@ -1565,6 +1604,21 @@ mod tests {
         ensure_backend_can_focus_target(
             &WindowTarget {
                 app_id: Some("com.mitchellh.ghostty.desktop".to_string()),
+                ..Default::default()
+            },
+            &window,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn cosmic_backend_can_exact_focus_targets() {
+        let mut window = window(2, "Codex", "codex-desktop", "codex-desktop");
+        window.backend = COSMIC_WAYLAND_BACKEND.to_string();
+
+        ensure_backend_can_focus_target(
+            &WindowTarget {
+                title: Some("Codex".to_string()),
                 ..Default::default()
             },
             &window,
