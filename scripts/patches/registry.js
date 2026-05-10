@@ -39,6 +39,9 @@ const {
   applyLinuxWindowOptionsPatch,
 } = require("./main-process.js");
 const {
+  applyLinuxChromePluginAutoInstallPatch,
+} = require("./chrome-plugin.js");
+const {
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseInstallFlowPatch,
   applyLinuxComputerUsePluginGatePatch,
@@ -147,6 +150,11 @@ const MAIN_BUNDLE_PATCHES = [
     name: "linux-computer-use-plugin-gate",
     ciPolicy: REQUIRED_UPSTREAM,
     apply: (source) => applyLinuxComputerUsePluginGatePatch(source),
+  },
+  {
+    name: "linux-chrome-plugin-auto-install",
+    ciPolicy: REQUIRED_UPSTREAM,
+    apply: (source) => applyLinuxChromePluginAutoInstallPatch(source),
   },
   {
     name: "browser-use-node-repl-approval",

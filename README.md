@@ -31,7 +31,7 @@ Anything systemd-based should work for the optional auto-updater service (`syste
 | Linux tray + warm-start handoff | ✅ always | Single-instance lock, second-instance window focus |
 | GUI install prompts (`kdialog` / `zenity`) | ✅ if installed | Falls back to interactive terminal prompt |
 | Linux browser annotations | ✅ always | Stored-anchor screenshots, isolated marker rendering |
-| Chrome plugin native host | ✅ always | Bundles the upstream Chrome plugin plus Linux native-messaging support for Chrome, Brave, and Chromium |
+| Chrome plugin native host | ✅ always | Auto-installs the upstream Chrome plugin plus Linux native-messaging support for Chrome, Brave, and Chromium |
 | Linux Computer Use | ⚠️ opt-in | MCP backend registers by default; the in-app UI is opt-in. Supports screenshots, accessibility, window targeting, and input synthesis |
 | Server-gated features (e.g. `gpt-5.5`) | 🟡 server-side | OpenAI rolls per-account, not project-controlled. Building a fresh package does not unlock these. |
 

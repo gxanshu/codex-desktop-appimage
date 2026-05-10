@@ -17,6 +17,9 @@ const {
   patchLinuxAppUpdaterBridge,
 } = require("./lib/linux-update-bridge-patch.js");
 const {
+  applyLinuxChromePluginAutoInstallPatch,
+} = require("./patches/chrome-plugin.js");
+const {
   COMPUTER_USE_UI_ENV_VAR,
   COMPUTER_USE_UI_SETTINGS_KEY,
   applyLinuxComputerUseFeaturePatch,
@@ -125,6 +128,7 @@ module.exports = {
   applyLinuxAvatarOverlayMousePassthroughPatch,
   applyLinuxBrowserUseIabVisibleOnCreatePatch,
   applyLinuxChromeExtensionStatusPatch,
+  applyLinuxChromePluginAutoInstallPatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseInstallFlowPatch,
   applyLinuxComputerUsePluginGatePatch,

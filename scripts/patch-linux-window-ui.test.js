@@ -19,6 +19,7 @@ const {
   applyBrowserUseNodeReplApprovalPatch,
   applyLinuxBrowserUseIabVisibleOnCreatePatch,
   applyLinuxChromeExtensionStatusPatch,
+  applyLinuxChromePluginAutoInstallPatch,
   applyLinuxAppUpdaterBridgePatch,
   applyLinuxAppUpdaterMenuPatch,
   applyLinuxExplicitIpcQuitPatch,
@@ -122,6 +123,13 @@ function computerUseGateBundleFixture() {
   return [
     "var Qt=`openai-bundled`,$t=`browser-use`,en=`chrome-internal`,tn=`computer-use`,nn=`latex-tectonic`;",
     "var $n=[{forceReload:!0,installWhenMissing:!0,name:$t,isEnabled:({features:e})=>e.browserAgentAvailable,migrate:cn},{name:en,isEnabled:({buildFlavor:e})=>rn(e)},{name:tn,isEnabled:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:wn},{name:nn,isEnabled:()=>!0}];",
+  ].join("");
+}
+
+function currentPluginGateBundleFixture() {
+  return [
+    "var lt=`browser-use`,ut=`chrome`,dt=`chrome-internal`,ft=`computer-use`,pt=`latex-tectonic`;",
+    "var Kr=[{forceReload:!0,installWhenMissing:!0,name:lt,isAvailable:({features:e})=>e.inAppBrowserUseAllowed,migrate:rr},{forceReload:!0,name:dt,isAvailable:({buildFlavor:e,features:t})=>Qn(e)&&t.externalBrowserUseAllowed},{forceReload:!0,name:ut,isAvailable:({buildFlavor:e,features:t})=>t.externalBrowserUseAllowed&&$n(e)},{name:ft,isAvailable:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:vr},{installWhenMissing:!0,name:ft,isAvailable:({buildFlavor:e,features:n,platform:r})=>t.T.isInternal(e)&&r===`win32`&&n.computerUse},{name:pt,isAvailable:()=>!0}];",
   ].join("");
 }
 
@@ -1096,16 +1104,70 @@ test("patches the current Computer Use gate without touching the Windows-interna
 });
 
 test("patches the current isAvailable Computer Use gate shape", () => {
-  const source = [
-    "var lt=`browser-use`,ut=`chrome`,dt=`chrome-internal`,ft=`computer-use`,pt=`latex-tectonic`;",
-    "var Kr=[{forceReload:!0,installWhenMissing:!0,name:lt,isAvailable:({features:e})=>e.inAppBrowserUseAllowed,migrate:rr},{forceReload:!0,name:dt,isAvailable:({buildFlavor:e,features:t})=>Qn(e)&&t.externalBrowserUseAllowed},{forceReload:!0,name:ut,isAvailable:({buildFlavor:e,features:t})=>t.externalBrowserUseAllowed&&$n(e)},{name:ft,isAvailable:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:vr},{installWhenMissing:!0,name:ft,isAvailable:({buildFlavor:e,features:n,platform:r})=>t.T.isInternal(e)&&r===`win32`&&n.computerUse},{name:pt,isAvailable:()=>!0}];",
-  ].join("");
+  const source = currentPluginGateBundleFixture();
 
   const patched = applyPatchTwice(applyLinuxComputerUsePluginGatePatch, source);
 
   assert.match(patched, /name:ft,isAvailable:\(\{features:e,platform:t\}\)=>\(t===`darwin`\|\|t===`linux`\)&&e\.computerUse,migrate:vr/);
   assert.match(patched, /t\.T\.isInternal\(e\)&&r===`win32`&&n\.computerUse/);
   assert.equal((patched.match(/installWhenMissing:!0,name:ft/g) || []).length, 2);
+});
+
+test("auto-installs the current Chrome plugin gate shape", () => {
+  const patched = applyPatchTwice(
+    applyLinuxChromePluginAutoInstallPatch,
+    currentPluginGateBundleFixture(),
+  );
+
+  assert.match(
+    patched,
+    /\{forceReload:!0,installWhenMissing:!0,name:ut,isAvailable:\(\{buildFlavor:e,features:t\}\)=>t\.externalBrowserUseAllowed&&\$n\(e\)\}/,
+  );
+  assert.match(patched, /name:dt,isAvailable:\(\{buildFlavor:e,features:t\}\)=>Qn\(e\)&&t\.externalBrowserUseAllowed/);
+  assert.equal((patched.match(/installWhenMissing:!0,name:ut/g) || []).length, 1);
+  assert.equal((patched.match(/installWhenMissing:!0,name:dt/g) || []).length, 0);
+});
+
+test("keeps an already auto-installed Chrome plugin gate unchanged", () => {
+  const source = currentPluginGateBundleFixture().replace(
+    "{forceReload:!0,name:ut,isAvailable:",
+    "{forceReload:!0,installWhenMissing:!0,name:ut,isAvailable:",
+  );
+
+  assert.equal(applyPatchTwice(applyLinuxChromePluginAutoInstallPatch, source), source);
+});
+
+test("handles literal Chrome plugin gate names", () => {
+  const source =
+    "var Kr=[{forceReload:!0,name:'chrome',isEnabled:({features:t})=>t.externalBrowserUseAllowed},{forceReload:!0,name:'chrome-internal',isEnabled:({features:t})=>t.externalBrowserUseAllowed}];";
+
+  const patched = applyPatchTwice(applyLinuxChromePluginAutoInstallPatch, source);
+
+  assert.match(patched, /installWhenMissing:!0,name:'chrome'/);
+  assert.doesNotMatch(patched, /installWhenMissing:!0,name:'chrome-internal'/);
+});
+
+test("reports missing required Chrome plugin auto-install gate as upstream validation failure", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-patch-report-missing-chrome-"));
+  try {
+    const buildDir = path.join(tempRoot, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.writeFileSync(path.join(buildDir, "main.js"), `${mainBundlePrefix}var plugins=[];`);
+
+    const report = createPatchReport();
+    captureWarns(() => patchExtractedApp(tempRoot, { report }));
+
+    const pluginGatePatch = report.patches.find((patch) => patch.name === "linux-chrome-plugin-auto-install");
+    assert.equal(pluginGatePatch.status, "skipped-optional");
+    assert.match(pluginGatePatch.reason, /Could not find Chrome plugin gate literal/);
+    assert.ok(
+      validateReport(report, "upstream-build").some((failure) =>
+        failure.startsWith("linux-chrome-plugin-auto-install: skipped-optional"),
+      ),
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("patches Computer Use gates that use imported namespace constants", () => {
