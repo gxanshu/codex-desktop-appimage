@@ -821,6 +821,36 @@ test_browser_use_node_repl_fallback_runtime() {
     assert_contains "$output_log" "Downloading Browser Use node_repl fallback runtime"
 }
 
+test_browser_use_node_repl_glibc_pidfd_patch_static() {
+    info "Checking Browser Use node_repl glibc pidfd patch scope"
+    assert_contains "$REPO_DIR/scripts/lib/bundled-plugins.sh" "patch_browser_use_node_repl_glibc_pidfd_symbols"
+    assert_contains "$REPO_DIR/scripts/lib/bundled-plugins.sh" "is_browser_use_node_repl_ldd_output_compatible"
+    assert_contains "$REPO_DIR/scripts/lib/bundled-plugins.sh" "install_browser_use_node_repl_executable_resource"
+    assert_contains "$REPO_DIR/scripts/lib/bundled-plugins.sh" "pidfd_spawnp"
+    assert_contains "$REPO_DIR/scripts/lib/bundled-plugins.sh" "pidfd_getpid"
+    assert_contains "$REPO_DIR/scripts/lib/bundled-plugins.sh" "GLIBC_2.39"
+    assert_contains "$REPO_DIR/scripts/lib/bundled-plugins.sh" "GLIBC_2.34"
+    assert_contains "$REPO_DIR/scripts/lib/bundled-plugins.sh" "non-pidfd GLIBC_2.39 references remain"
+    assert_contains "$REPO_DIR/scripts/lib/bundled-plugins.sh" 'ldd "$destination"'
+}
+
+test_browser_use_node_repl_ldd_output_compatibility() {
+    info "Checking Browser Use node_repl ldd output compatibility gate"
+    # shellcheck disable=SC1091
+    source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+
+    if is_browser_use_node_repl_ldd_output_compatible "/node_repl: /lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.39' not found (required by /node_repl)"; then
+        fail "Expected ldd GLIBC version errors to be rejected"
+    fi
+
+    if is_browser_use_node_repl_ldd_output_compatible "libmissing.so => not found"; then
+        fail "Expected unresolved ldd libraries to be rejected"
+    fi
+
+    is_browser_use_node_repl_ldd_output_compatible "libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6" \
+        || fail "Expected ordinary ldd output to be accepted"
+}
+
 make_fake_chrome_upstream_app() {
     local app_dir="$1"
     local resources_dir="$app_dir/Contents/Resources"
@@ -2219,6 +2249,8 @@ main() {
     test_installer_keeps_electron_fallback_for_bad_metadata
     test_managed_node_runtime_source_install
     test_browser_use_node_repl_fallback_runtime
+    test_browser_use_node_repl_glibc_pidfd_patch_static
+    test_browser_use_node_repl_ldd_output_compatibility
     test_chrome_plugin_staging
     test_chrome_native_host_manifest_writer
     test_launcher_template_sanity
