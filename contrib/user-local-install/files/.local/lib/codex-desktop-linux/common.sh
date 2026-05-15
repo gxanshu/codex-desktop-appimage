@@ -192,6 +192,11 @@ source_repo_overlay_remove_paths() {
     '
 }
 
+source_repo_path_is_unmerged() {
+    local path="$1"
+    git -C "$SOURCE_REPO_DIR" ls-files -u -- "$path" | grep -q .
+}
+
 source_repo_has_overlay() {
     local base_ref=""
 
@@ -253,11 +258,12 @@ apply_source_overlay() {
     while IFS= read -r path; do
         [ -n "$path" ] || continue
         [ -e "$SOURCE_REPO_DIR/$path" ] || continue
+        source_repo_path_is_unmerged "$path" && continue
         target_path="$MANAGED_REPO_DIR/$path"
         mkdir -p "$(dirname "$target_path")"
         rm -rf "$target_path"
         cp -a "$SOURCE_REPO_DIR/$path" "$target_path"
-    done < <(source_repo_overlay_paths "ACMRTUXB" "$base_ref")
+    done < <(source_repo_overlay_paths "ACMRTXB" "$base_ref")
 
     while IFS= read -r path; do
         [ -n "$path" ] || continue
