@@ -1,8 +1,10 @@
 # AGENTS.md
 
+> **Fork note**: this is a fork of `ilysenko/codex-desktop-linux`. The fork only produces an AppImage and has deleted `scripts/build-deb.sh`, `scripts/build-rpm.sh`, `scripts/build-pacman.sh`, `scripts/install-deps.sh`, `scripts/rebuild-candidate.sh`, the `updater/` crate, `packaging/linux/`, and the on-device `codex-update-manager` service. References to those paths below describe the upstream architecture and no longer correspond to files in this repo — treat them as historical context when working on patches that came from upstream.
+
 ## Purpose
 
-This repository adapts the official macOS Codex Desktop DMG to a runnable Linux build, packages that build as native `.deb`, `.rpm`, and pacman artifacts, and ships a local Rust update manager that rebuilds future Linux packages from newer upstream DMGs.
+This repository adapts the official macOS Codex Desktop DMG to a runnable Linux build and ships it as a self-updating AppImage. A daily GitHub Actions workflow (`.github/workflows/release-appimage.yml`) detects upstream DMG changes and publishes a new GitHub Release. The AppImage embeds `gh-releases-zsync|<owner>|<repo>|latest|...` so Gear Lever and AppImageUpdate handle end-user updates.
 
 The current working flow is:
 
@@ -13,8 +15,7 @@ The current working flow is:
 5. stages bundled plugins (Browser Use, Chrome native-messaging host, Linux Computer Use)
 6. runs any opt-in `linux-features/` stage hooks
 7. writes a Linux launcher into `codex-app/start.sh`
-8. `scripts/build-deb.sh`, `scripts/build-rpm.sh`, or `scripts/build-pacman.sh` packages `codex-app/`
-9. `codex-update-manager` runs as a `systemd --user` service and manages local auto-updates
+8. `scripts/build-appimage.sh` packages `codex-app/` into `dist/codex-desktop-*-x86_64.AppImage` (+ `.zsync` sidecar when `APPIMAGE_UPDATE_INFO` is set)
 
 ## Source Of Truth
 

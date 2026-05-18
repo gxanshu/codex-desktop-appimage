@@ -1,0 +1,206 @@
+name: Release AppImage
+
+on:
+  schedule:
+    - cron: '15 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_DMG_URL: https://persistent.oaistatic.com/codex-app-prod/Codex.dmg
+  UPSTREAM_DMG_PATH: /tmp/codex-upstream/Codex.dmg
+  DMG_CACHE_SCHEMA_VERSION: v1
+
+jobs:
+  release:
+    name: Build & release AppImage
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full make g++ python3 curl unzip jq file desktop-file-utils
+
+      - name: Capture upstream DMG metadata
+        id: upstream-metadata
+        run: |
+          set -euo pipefail
+
+          headers_file="$(mktemp)"
+          trap 'rm -f "$headers_file"' EXIT
+
+          curl -fsSLI "$UPSTREAM_DMG_URL" > "$headers_file"
+
+          last_modified="$(awk 'BEGIN{IGNORECASE=1} /^last-modified:/ {sub(/\r$/,""); sub(/^[^:]+: /,""); print; exit}' "$headers_file")"
+          etag="$(awk 'BEGIN{IGNORECASE=1} /^etag:/ {sub(/\r$/,""); sub(/^[^:]+: /,""); gsub(/"/,""); print; exit}' "$headers_file")"
+          content_length="$(awk 'BEGIN{IGNORECASE=1} /^content-length:/ {sub(/\r$/,""); sub(/^[^:]+: /,""); print; exit}' "$headers_file")"
+
+          [ -n "$last_modified" ]   || last_modified="unknown"
+          [ -n "$etag" ]            || etag="no-etag"
+          [ -n "$content_length" ]  || content_length="unknown"
+
+          cache_segment="$(printf '%s|%s|%s\n' "$last_modified" "$etag" "$content_length" | sha256sum | cut -d' ' -f1)"
+
+          {
+            echo "last_modified=$last_modified"
+            echo "etag=$etag"
+            echo "content_length=$content_length"
+            echo "cache_segment=$cache_segment"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Restore cached upstream DMG
+        id: dmg-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/codex-upstream/Codex.dmg
+          key: upstream-dmg-${{ env.DMG_CACHE_SCHEMA_VERSION }}-${{ steps.upstream-metadata.outputs.cache_segment }}
+
+      - name: Download upstream DMG
+        if: steps.dmg-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$UPSTREAM_DMG_PATH")"
+          curl -fL --retry 3 -o "$UPSTREAM_DMG_PATH" "$UPSTREAM_DMG_URL"
+
+      - name: Fingerprint DMG
+        id: local-dmg
+        run: |
+          set -euo pipefail
+
+          test -s "$UPSTREAM_DMG_PATH"
+
+          dmg_sha256="$(sha256sum "$UPSTREAM_DMG_PATH" | cut -d' ' -f1)"
+          dmg_sha256_short="${dmg_sha256:0:8}"
+          dmg_size_bytes="$(stat -c '%s' "$UPSTREAM_DMG_PATH")"
+          tested_at_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          package_version="$(date -u +%Y.%m.%d.%H%M%S)+${dmg_sha256_short}"
+
+          {
+            echo "sha256=$dmg_sha256"
+            echo "sha256_short=$dmg_sha256_short"
+            echo "size_bytes=$dmg_size_bytes"
+            echo "tested_at_utc=$tested_at_utc"
+            echo "package_version=$package_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compare against previous release
+        id: changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          new_sha="${{ steps.local-dmg.outputs.sha256 }}"
+          prev_sha=""
+
+          if gh release download --pattern 'upstream-dmg-metadata.json' \
+              --dir /tmp/prev-meta 2>/dev/null; then
+            prev_sha="$(jq -r '.sha256 // empty' /tmp/prev-meta/upstream-dmg-metadata.json || true)"
+          fi
+
+          if [ "$new_sha" = "$prev_sha" ] && [ -n "$prev_sha" ]; then
+            echo "Upstream DMG unchanged (sha256=$new_sha); skipping release."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Upstream DMG changed (was '${prev_sha:-none}', now '$new_sha'); will release."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install appimagetool
+        if: steps.changed.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 \
+            -o /tmp/appimagetool \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
+          # Extract so we don't need FUSE on the runner. AppRun is a shim that
+          # resolves $APPDIR/usr/bin/appimagetool, so we must keep the full
+          # squashfs-root tree intact and symlink to AppRun rather than copy it.
+          ( cd /tmp && ./appimagetool --appimage-extract >/dev/null )
+          sudo rm -rf /opt/appimagetool
+          sudo mv /tmp/squashfs-root /opt/appimagetool
+          sudo ln -sf /opt/appimagetool/AppRun /usr/local/bin/appimagetool
+          appimagetool --version || true
+
+      - name: Build patched Codex app from DMG
+        if: steps.changed.outputs.changed == 'true'
+        run: make build-app DMG="$UPSTREAM_DMG_PATH"
+
+      - name: Build AppImage with embedded update info
+        if: steps.changed.outputs.changed == 'true'
+        env:
+          APPIMAGE_UPDATE_INFO: "gh-releases-zsync|${{ github.repository_owner }}|${{ github.event.repository.name }}|latest|codex-desktop-*-x86_64.AppImage.zsync"
+          PACKAGE_VERSION: ${{ steps.local-dmg.outputs.package_version }}
+        run: bash scripts/build-appimage.sh
+
+      - name: Write upstream metadata sidecar
+        if: steps.changed.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          cat > upstream-dmg-metadata.json <<JSON
+          {
+            "url": "$UPSTREAM_DMG_URL",
+            "last_modified": "${{ steps.upstream-metadata.outputs.last_modified }}",
+            "etag": "${{ steps.upstream-metadata.outputs.etag }}",
+            "content_length": "${{ steps.upstream-metadata.outputs.content_length }}",
+            "sha256": "${{ steps.local-dmg.outputs.sha256 }}",
+            "size_bytes": "${{ steps.local-dmg.outputs.size_bytes }}",
+            "tested_at_utc": "${{ steps.local-dmg.outputs.tested_at_utc }}",
+            "package_version": "${{ steps.local-dmg.outputs.package_version }}"
+          }
+          JSON
+          jq . upstream-dmg-metadata.json
+
+      - name: List release artifacts
+        if: steps.changed.outputs.changed == 'true'
+        run: ls -la dist/ upstream-dmg-metadata.json
+
+      - name: Publish GitHub Release
+        if: steps.changed.outputs.changed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.local-dmg.outputs.package_version }}
+          name: Codex Desktop ${{ steps.local-dmg.outputs.package_version }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            dist/codex-desktop-*-x86_64.AppImage
+            dist/codex-desktop-*-x86_64.AppImage.zsync
+            upstream-dmg-metadata.json
+          body: |
+            Built from upstream Codex.dmg.
+
+            - Source: `${{ env.UPSTREAM_DMG_URL }}`
+            - DMG SHA-256: `${{ steps.local-dmg.outputs.sha256 }}`
+            - DMG Last-Modified: `${{ steps.upstream-metadata.outputs.last_modified }}`
+            - DMG ETag: `${{ steps.upstream-metadata.outputs.etag }}`
+            - DMG Size: `${{ steps.local-dmg.outputs.size_bytes }}` bytes
+            - Built at: `${{ steps.local-dmg.outputs.tested_at_utc }}`
+
+            Install the AppImage with [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever) for automatic updates.
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Release AppImage"
+            echo ""
+            echo "- Upstream sha256: \`${{ steps.local-dmg.outputs.sha256 }}\`"
+            echo "- Changed since last release: \`${{ steps.changed.outputs.changed }}\`"
+            if [ "${{ steps.changed.outputs.changed }}" = "true" ]; then
+              echo "- Published tag: \`v${{ steps.local-dmg.outputs.package_version }}\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

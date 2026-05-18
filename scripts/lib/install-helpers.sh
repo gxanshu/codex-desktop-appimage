@@ -15,10 +15,7 @@ error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
 dependency_help() {
     cat <<'EOF'
-Run the helper to install them automatically:
-  bash scripts/install-deps.sh
-
-Or install manually:
+Install the build dependencies manually:
   sudo apt install python3 p7zip-full curl unzip build-essential                   # Debian/Ubuntu
   sudo dnf install python3 7zip curl unzip @development-tools                       # Fedora 41+ (dnf5)
   sudo dnf install nodejs npm python3 p7zip p7zip-plugins curl unzip                # Fedora <41 (dnf)
@@ -182,13 +179,7 @@ $(dependency_help)"
     seven_zip_banner="$("$SEVEN_ZIP_CMD" 2>&1 | head -n 3 || true)"
     if [[ "$seven_zip_banner" == *"16.02"* || "$seven_zip_banner" == *"p7zip Version"* ]]; then
         error "System 7-zip is too old for modern APFS DMGs or lacks APFS support.
-Install a newer 7zz first by running:
-  bash scripts/install-deps.sh
-
-That helper bootstraps a current 7zz into ~/.local/bin by default.
-If ~/.local/bin is not on your PATH, add it before re-running this script:
-  export PATH=\"$HOME/.local/bin:$PATH\"
-Set SEVENZIP_SYSTEM_INSTALL=1 to install into /usr/local/bin instead."
+Install a current 7zz (e.g. from https://www.7-zip.org/) and ensure it is on PATH before re-running this script."
     fi
 
     info "All system dependencies found (using $SEVEN_ZIP_CMD)"

@@ -3673,19 +3673,9 @@ EOF
 
 main() {
     test_common_helper_sourcing
-    test_deb_builder_smoke
-    test_update_builder_preserves_enabled_linux_features_config
-    test_deb_builder_respects_package_identity
-    test_deb_builder_without_updater
-    test_no_updater_cleanup_helper_removes_inactive_user_enablement
-    test_rpm_builder_smoke
-    test_pacman_builder_without_updater_transition_hook
     test_appimage_builder_smoke
-    test_missing_input_failure
-    test_make_install_reports_missing_native_packages
     test_make_build_app_uses_installer_download_flow_by_default
     test_make_build_app_fresh_uses_installer_fresh_flow
-    test_native_shortcut_targets_compose_existing_flows
     test_upstream_build_app_workflow_tracks_dmg_metadata
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata
@@ -3702,7 +3692,6 @@ main() {
     test_chrome_browser_client_profile_root_variants
     test_chrome_marketplace_fallback_synthesis
     test_chrome_native_host_manifest_writer
-    test_launcher_template_sanity
     test_webview_probe_equivalence
     test_side_by_side_launcher_identity
     test_linux_file_manager_patch_smoke

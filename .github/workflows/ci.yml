@@ -12,7 +12,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  CI_PACKAGE_VERSION: 2026.04.28.000000+ci${{ github.run_number }}
 
 jobs:
   rust-and-smoke:
@@ -28,10 +27,6 @@ jobs:
         run: |
           set -euo pipefail
           bash -n install.sh
-          bash -n scripts/install-deps.sh
-          bash -n scripts/build-deb.sh
-          bash -n scripts/build-rpm.sh
-          bash -n scripts/build-pacman.sh
           bash -n scripts/build-appimage.sh
           bash -n scripts/ci/update-nix-hashes.sh
           bash -n scripts/ci/validate-nix-pins.sh
@@ -68,39 +63,6 @@ jobs:
             echo "- Shell syntax checks passed."
             echo "- Rust formatting, clippy, check, and tests passed."
             echo "- Script smoke tests passed."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  package-deb:
-    name: Build Debian Package
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create minimal packaged app fixture
-        run: |
-          set -euo pipefail
-          rm -rf codex-app dist
-          tests/fixtures/create-packaged-app-fixture.sh codex-app
-
-      - name: Build Debian package
-        run: PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-deb.sh
-
-      - name: Inspect Debian package
-        run: |
-          set -euo pipefail
-          deb_file="$(find dist -maxdepth 1 -name 'codex-desktop_*.deb' -print -quit)"
-          test -n "$deb_file"
-          dpkg-deb -I "$deb_file"
-          dpkg-deb -c "$deb_file" | tee /tmp/deb-contents.txt >/dev/null
-          grep -q './usr/bin/codex-update-manager' /tmp/deb-contents.txt
-          grep -q './usr/lib/systemd/user/codex-update-manager.service' /tmp/deb-contents.txt
-          grep -q './opt/codex-desktop/update-builder/install.sh' /tmp/deb-contents.txt
-          grep -q './opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh' /tmp/deb-contents.txt
-          {
-            echo "## Debian Package Validation"
-            echo ""
-            echo "- Built: \`$(basename "$deb_file")\`"
-            echo "- Verified updater binary, user service, update-builder bundle, and packaged runtime helper."
           } >> "$GITHUB_STEP_SUMMARY"
 
   nix:
@@ -140,95 +102,3 @@ jobs:
             .#installer \
             --no-link \
             --print-build-logs
-
-  package-rpm:
-    name: Build RPM Package
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install RPM tooling
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y rpm
-          rpmbuild --version
-
-      - name: Create minimal packaged app fixture
-        run: |
-          set -euo pipefail
-          rm -rf codex-app dist
-          tests/fixtures/create-packaged-app-fixture.sh codex-app
-
-      - name: Build RPM package
-        run: PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-rpm.sh
-
-      - name: Inspect RPM package
-        run: |
-          set -euo pipefail
-          rpm_file="$(find dist -maxdepth 1 -name 'codex-desktop-*.rpm' -print -quit)"
-          test -n "$rpm_file"
-          rpm -qip "$rpm_file"
-          rpm -qlp "$rpm_file" | tee /tmp/rpm-contents.txt >/dev/null
-          grep -q '/usr/bin/codex-update-manager' /tmp/rpm-contents.txt
-          grep -q '/usr/lib/systemd/user/codex-update-manager.service' /tmp/rpm-contents.txt
-          grep -q '/opt/codex-desktop/update-builder/install.sh' /tmp/rpm-contents.txt
-          grep -q '/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh' /tmp/rpm-contents.txt
-          {
-            echo "## RPM Package Validation"
-            echo ""
-            echo "- Built: \`$(basename "$rpm_file")\`"
-            echo "- Verified updater binary, user service, update-builder bundle, and packaged runtime helper."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  package-pacman:
-    name: Build Pacman Package
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build and inspect pacman package in Arch Linux
-        run: |
-          set -euo pipefail
-          docker run --rm \
-            -e CI_PACKAGE_VERSION="$CI_PACKAGE_VERSION" \
-            -v "$PWD:/work" \
-            -w /work \
-            archlinux:base-devel \
-            bash -lc '
-              set -euo pipefail
-              pacman -Syu --noconfirm --needed rust nodejs npm zstd sudo
-              useradd -m builder
-              chown -R builder:builder /work
-
-              runuser -u builder -- bash -lc '"'"'
-                set -euo pipefail
-                rm -rf codex-app dist
-                tests/fixtures/create-packaged-app-fixture.sh codex-app
-
-                cargo build --release -p codex-update-manager
-                PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-pacman.sh
-
-                pkg_file="$(find dist -maxdepth 1 -name "codex-desktop-*.pkg.tar.*" -print -quit)"
-                test -n "$pkg_file"
-                pacman -Qip "$pkg_file"
-                pacman -Qlp "$pkg_file" | tee /tmp/pacman-contents.txt >/dev/null
-                grep -q "usr/bin/codex-update-manager" /tmp/pacman-contents.txt
-                grep -q "usr/lib/systemd/user/codex-update-manager.service" /tmp/pacman-contents.txt
-                grep -q "opt/codex-desktop/update-builder/install.sh" /tmp/pacman-contents.txt
-                grep -q "opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" /tmp/pacman-contents.txt
-                printf "%s\n" "$(basename "$pkg_file")" > /tmp/pacman-package-name.txt
-              '"'"'
-              cp /tmp/pacman-package-name.txt /work/.pacman-package-name.txt
-            '
-
-      - name: Write pacman validation summary
-        run: |
-          set -euo pipefail
-          pkg_file="$(cat .pacman-package-name.txt)"
-          {
-            echo "## Pacman Package Validation"
-            echo ""
-            echo "- Built: \`$pkg_file\`"
-            echo "- Verified updater binary, user service, update-builder bundle, and packaged runtime helper."
-          } >> "$GITHUB_STEP_SUMMARY"

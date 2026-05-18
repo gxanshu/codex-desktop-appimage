@@ -1,8 +1,10 @@
-# Contributing to Codex Desktop for Linux
+# Contributing to Codex Desktop for Linux (AppImage fork)
 
-Thanks for your interest in contributing to Codex Desktop for Linux. This project adapts the official macOS Codex Desktop DMG into a runnable Linux app, packages it for multiple Linux distributions, and maintains a local Rust update manager for future rebuilds.
+> **Fork note**: this is a fork of `ilysenko/codex-desktop-linux` that ships only the AppImage and removes the deb/rpm/pacman builders, the `codex-update-manager` daemon, and the on-device rebuild pipeline. CI publishes an AppImage to GitHub Releases daily when the upstream DMG changes. Most of the upstream guidance below about "native packages" and "the updater" no longer applies here — treat it as historical reference for how the upstream project still works. Pull upstream patcher fixes via `git fetch upstream && git merge upstream/main` (see README).
 
-Contributions of all sizes are welcome: bug reports, documentation improvements, packaging fixes, installer updates, tests, and new features.
+Thanks for your interest in contributing.
+
+Contributions of all sizes are welcome: bug reports, documentation improvements, installer updates, tests, and new features.
 
 ## Pull Request Best Practices
 
