@@ -105,8 +105,12 @@ main() {
 
     prepare_appdir
 
+    local output_basename
+    output_basename="$(basename "$output_file")"
+    local stray_zsync="$PWD/$output_basename.zsync"
+
     mkdir -p "$DIST_DIR"
-    rm -f "$output_file" "$output_file.zsync"
+    rm -f "$output_file" "$output_file.zsync" "$stray_zsync"
     info "Building AppImage: $output_file"
 
     local -a appimagetool_args=(--no-appstream)
@@ -119,6 +123,13 @@ main() {
         "$appimagetool" "${appimagetool_args[@]}" "$APPDIR" "$output_file"
     chmod 0755 "$output_file"
     info "Built AppImage: $output_file"
+
+    # appimagetool delegates zsync generation to zsyncmake, which writes the
+    # .zsync file to its current working directory using the AppImage's
+    # basename — not next to the output. Move it adjacent to the AppImage.
+    if [ -f "$stray_zsync" ] && [ ! -f "$output_file.zsync" ]; then
+        mv "$stray_zsync" "$output_file.zsync"
+    fi
     if [ -f "$output_file.zsync" ]; then
         info "Built zsync sidecar: $output_file.zsync"
     fi
