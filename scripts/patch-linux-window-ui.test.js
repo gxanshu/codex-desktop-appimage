@@ -1896,6 +1896,22 @@ test("shows current Computer Use plugin UI on Linux without the upstream rollout
   );
 });
 
+test("warns without partially patching when Computer Use renderer availability gate drifts", () => {
+  const source =
+    "function g(e){return e===`macOS`||e===`windows`}" +
+    "const isComputerUseAvailable=true;" +
+    "function _(e){let t=(0,d.c)(8),{enabled:n,hostId:r,isHostLocal:i}=e,a=n===void 0?!0:n,{isLoading:o,platform:c}=u(),l=s(`1506311413`),f;t[0]===r?f=t[1]:(f={featureName:`computer_use`,hostId:r},t[0]=r,t[1]=f);let p=h(f),m;t[2]===c?m=t[3]:(m=g(c),t[2]=c,t[3]=m);let _=a&&i&&l&&(o||m||drifted),v=_&&!o&&p.enabled&&!p.isLoading,y=_&&p.isLoading,b=_&&(o||p.isLoading),x;return x}";
+
+  const { value: patched, warnings } = captureWarns(() =>
+    applyLinuxComputerUseRendererAvailabilityPatch(source),
+  );
+
+  assert.equal(patched, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find Computer Use renderer availability gate — skipping Linux Computer Use UI availability patch",
+  ]);
+});
+
 test("patches all Computer Use renderer availability gates in one pass", () => {
   const source = [
     "let m=a&&(i||l===`linux`)&&s===`electron`&&(l===`linux`||u&&(c||p)),h=m&&!c&&(l===`linux`||f.enabled)&&!f.isLoading,g=m&&l!==`linux`&&f.isLoading,_=m&&(c||l!==`linux`&&f.isLoading),v;",

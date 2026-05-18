@@ -203,7 +203,8 @@ function applyLinuxComputerUseFeaturePatch(currentSource) {
 
 function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
   let patchedSource = currentSource;
-  let changed = false;
+  let platformPredicateChanged = false;
+  let availabilityChanged = false;
 
   const platformPredicateNeedle = "function hae(e){return e===`macOS`||e===`windows`}";
   const platformPredicatePatch =
@@ -211,12 +212,12 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
   const currentPlatformPredicateNeedle =
     /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return \2===`macOS`\|\|\2===`windows`\}/g;
   const currentPlatformPredicatePatch = (_, fnName, platformVar) => {
-    changed = true;
+    platformPredicateChanged = true;
     return `function ${fnName}(${platformVar}){return ${platformVar}===\`macOS\`||${platformVar}===\`windows\`||${platformVar}===\`linux\`}`;
   };
   if (patchedSource.includes(platformPredicateNeedle)) {
     patchedSource = patchedSource.split(platformPredicateNeedle).join(platformPredicatePatch);
-    changed = true;
+    platformPredicateChanged = true;
   }
   patchedSource = patchedSource.replace(currentPlatformPredicateNeedle, currentPlatformPredicatePatch);
 
@@ -228,11 +229,11 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
     "let m=a&&(i||l===`linux`)&&s===`electron`&&(l===`linux`||u&&(c||p)),h=m&&!c&&(l===`linux`||f.enabled)&&!f.isLoading,g=m&&l!==`linux`&&f.isLoading,_=m&&(c||l!==`linux`&&f.isLoading),v;";
   if (patchedSource.includes(availabilityHostLocalLinuxPatch)) {
     patchedSource = patchedSource.split(availabilityHostLocalLinuxPatch).join(availabilityPatch);
-    changed = true;
+    availabilityChanged = true;
   }
   if (patchedSource.includes(availabilityNeedle)) {
     patchedSource = patchedSource.split(availabilityNeedle).join(availabilityPatch);
-    changed = true;
+    availabilityChanged = true;
   }
 
   const currentAvailabilityNeedle =
@@ -241,10 +242,10 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
     "let _=a&&i&&(c===`linux`||l&&(o||m)),v=_&&!o&&(c===`linux`||p.enabled)&&!p.isLoading,y=_&&c!==`linux`&&p.isLoading,b=_&&(o||c!==`linux`&&p.isLoading),x;";
   if (patchedSource.includes(currentAvailabilityNeedle)) {
     patchedSource = patchedSource.split(currentAvailabilityNeedle).join(currentAvailabilityPatch);
-    changed = true;
+    availabilityChanged = true;
   }
 
-  if (changed || patchedSource.includes(availabilityPatch) || patchedSource.includes(currentAvailabilityPatch)) {
+  if (availabilityChanged || patchedSource.includes(availabilityPatch) || patchedSource.includes(currentAvailabilityPatch)) {
     return patchedSource;
   }
 
@@ -252,9 +253,10 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
     console.warn(
       "WARN: Could not find Computer Use renderer availability gate — skipping Linux Computer Use UI availability patch",
     );
+    return currentSource;
   }
 
-  return patchedSource;
+  return platformPredicateChanged ? patchedSource : currentSource;
 }
 
 function applyLinuxComputerUseInstallFlowPatch(currentSource) {
