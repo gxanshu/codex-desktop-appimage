@@ -79,6 +79,9 @@ function captureWarns(fn) {
 const mainBundleSource =
   "function codexLinuxReadAloudHandle(e={}){return e.action===`config`?codexLinuxReadAloudConfig():e.action===`setup`?codexLinuxReadAloudSetup(e):e.action===`stop`?codexLinuxReadAloudStop():e.action===`speak`&&e.source===`button`?codexLinuxReadAloudSpeak(e.text):codexLinuxReadAloudReport({spoken:!1,reason:`not-explicit`})}var h={handlers:{\"linux-read-aloud\":async(e)=>codexLinuxReadAloudHandle(e),\"native-desktop-apps\":async()=>({apps:[]})}};";
 
+const explicitButtonMainBundleSource =
+  "function codexLinuxReadAloudHandle(e={}){return e.action===`config`?codexLinuxReadAloudConfig():e.action===`setup`?codexLinuxReadAloudSetup(e):e.action===`stop`?codexLinuxReadAloudStop():e.action===`speak`&&e.source===`button`?codexLinuxReadAloudSpeak(e.text,{requireEnabled:!1}):codexLinuxReadAloudReport({spoken:!1,reason:`not-explicit`})}var h={handlers:{\"linux-read-aloud\":async(e)=>codexLinuxReadAloudHandle(e),\"native-desktop-apps\":async()=>({apps:[]})}};";
+
 const dictationSource =
   "function Ht(){let {recordingDurationMs:T,waveformCanvasRef:E,startWaveformCapture:D,stopWaveformCapture:O,resetWaveformDisplay:k}=Ve(),m={current:null},_={current:null},v={current:[]},y={current:null},C={current:null};let j=async({action:e,handlers:n})=>{let i=`hello`;i.length>0&&(h.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:i}),e===`send`?n.onTranscriptSend(i):n.onTranscriptInsert(i))};let M=async()=>{let e=y.current??`insert`;y.current=null;let r=m.current,i=v.current;v.current=[],r&&(r.ondataavailable=null,r.onstop=null),m.current=null,O();};let P=z(e=>{y.current=e;let t=m.current;if(!t){M();return}if(t.state===`inactive`){M();return}t.stop()});return{startDictation:z(async()=>{let e=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1}});let t=new MediaRecorder(e);m.current=t,v.current=[],t.ondataavailable=e=>{e.data.size>0&&v.current.push(e.data)},t.onstop=()=>{M()},t.start(),l(!0)}),stopDictation:P}}function Kt(){let p={current:null};let x=e=>{!d||p.current!==e.sessionId||(p.current=null,o(`insert`))}}";
 
@@ -372,14 +375,20 @@ test("conversation mode exposes optional patch descriptors when enabled", () => 
 test("main bundle patch allows conversation mode to use Read Aloud", () => {
   const patched = twice(applyReadAloudMainBundlePatch, mainBundleSource);
   assert.match(patched, /e\.source===`button`\|\|e\.source===`conversation`/);
-  assert.match(patched, /codexLinuxReadAloudSpeak\(e\.text,\{requireEnabled:e\.source!==`conversation`\}\)/);
+  assert.match(patched, /codexLinuxReadAloudSpeak\(e\.text,\{requireEnabled:!1\}\)/);
+});
+
+test("main bundle patch preserves explicit button speech while adding conversation mode", () => {
+  const patched = twice(applyReadAloudMainBundlePatch, explicitButtonMainBundleSource);
+  assert.match(patched, /e\.source===`button`\|\|e\.source===`conversation`/);
+  assert.match(patched, /codexLinuxReadAloudSpeak\(e\.text,\{requireEnabled:!1\}\)/);
 });
 
 test("main bundle patch upgrades older conversation speech gates", () => {
   const alreadyAllowed =
     "function codexLinuxReadAloudHandle(e={}){return e.action===`config`?codexLinuxReadAloudConfig():e.action===`setup`?codexLinuxReadAloudSetup(e):e.action===`stop`?codexLinuxReadAloudStop():e.action===`speak`&&(e.source===`button`||e.source===`conversation`)?codexLinuxReadAloudSpeak(e.text):codexLinuxReadAloudReport({spoken:!1,reason:`not-explicit`})}var h={handlers:{\"linux-read-aloud\":async(e)=>codexLinuxReadAloudHandle(e),\"native-desktop-apps\":async()=>({apps:[]})}};";
   const patched = twice(applyReadAloudMainBundlePatch, alreadyAllowed);
-  assert.match(patched, /codexLinuxReadAloudSpeak\(e\.text,\{requireEnabled:e\.source!==`conversation`\}\)/);
+  assert.match(patched, /codexLinuxReadAloudSpeak\(e\.text,\{requireEnabled:!1\}\)/);
 });
 
 test("composer runtime appends one browser-side conversation controller", () => {
@@ -1633,7 +1642,7 @@ test("conversation mode patches matching app assets and records report entries",
         );
         assert.match(
           fs.readFileSync(path.join(buildDir, "main.js"), "utf8"),
-          /codexLinuxReadAloudSpeak\(e\.text,\{requireEnabled:e\.source!==`conversation`\}\)/,
+          /codexLinuxReadAloudSpeak\(e\.text,\{requireEnabled:!1\}\)/,
         );
         assert.match(
           fs.readFileSync(path.join(assetsDir, "annotation-comment-editor-card-test.js"), "utf8"),

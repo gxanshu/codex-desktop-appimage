@@ -11,14 +11,27 @@ function applyReadAloudMainBundlePatch(source) {
   if (!source.includes(`"${HANDLER_NAME}":async`)) {
     return source;
   }
-  if (source.includes("requireEnabled:e.source!==`conversation`")) {
+  if (
+    source.includes("e.source===`conversation`") &&
+    source.includes("codexLinuxReadAloudSpeak(e.text,{requireEnabled:!1})")
+  ) {
     return source;
   }
+  const explicitButton =
+    "e.action===`speak`&&e.source===`button`?codexLinuxReadAloudSpeak(e.text,{requireEnabled:!1})";
   const buttonOnly = "e.action===`speak`&&e.source===`button`?codexLinuxReadAloudSpeak(e.text)";
   const oldConversation = "e.action===`speak`&&(e.source===`button`||e.source===`conversation`)?codexLinuxReadAloudSpeak(e.text)";
-  const withConversation = "e.action===`speak`&&(e.source===`button`||e.source===`conversation`)?codexLinuxReadAloudSpeak(e.text,{requireEnabled:e.source!==`conversation`})";
+  const oldConversationGate =
+    "e.action===`speak`&&(e.source===`button`||e.source===`conversation`)?codexLinuxReadAloudSpeak(e.text,{requireEnabled:e.source!==`conversation`})";
+  const withConversation = "e.action===`speak`&&(e.source===`button`||e.source===`conversation`)?codexLinuxReadAloudSpeak(e.text,{requireEnabled:!1})";
+  if (source.includes(oldConversationGate)) {
+    return source.replace(oldConversationGate, withConversation);
+  }
   if (source.includes(oldConversation)) {
     return source.replace(oldConversation, withConversation);
+  }
+  if (source.includes(explicitButton)) {
+    return source.replace(explicitButton, withConversation);
   }
   if (source.includes(buttonOnly)) {
     return source.replace(buttonOnly, withConversation);
