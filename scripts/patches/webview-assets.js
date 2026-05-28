@@ -17,6 +17,7 @@ function applyLinuxOpaqueWindowsDefaultPatch(currentSource) {
   const runtimeDefaultPatched = () =>
     patchedSource.includes("document.documentElement.dataset.codexOs===`linux`&&((o===`light`?l:f)?.opaqueWindows==null") ||
     patchedSource.includes("document.documentElement.dataset.codexOs===`linux`&&((s===`light`?u:p)?.opaqueWindows==null") ||
+    patchedSource.includes("document.documentElement.dataset.codexOs===`linux`&&g.opaqueWindows==null&&(g={...g,opaqueWindows:!0})") ||
     /document\.documentElement\.dataset\.codexOs===`linux`&&\(\([A-Za-z_$][\w$]*===`light`\?[A-Za-z_$][\w$]*:[A-Za-z_$][\w$]*\)\?\.opaqueWindows==null/u.test(patchedSource);
   const linuxDefaultPatched = () =>
     mergeDefaultPatched() || settingsDefaultPatched() || runtimeDefaultPatched();
@@ -94,6 +95,16 @@ function applyLinuxOpaqueWindowsDefaultPatch(currentSource) {
     patchedSource = patchedSource.replace(currentRuntimeNeedle, currentRuntimePatch);
   }
 
+  const appMainRuntimeNeedle =
+    "if((g.opaqueWindows||i)&&!pc()){e.classList.add(`electron-opaque`);return}";
+  const appMainRuntimePatch =
+    "if(document.documentElement.dataset.codexOs===`linux`&&g.opaqueWindows==null&&(g={...g,opaqueWindows:!0}),(g.opaqueWindows||i)&&!pc()){e.classList.add(`electron-opaque`);return}";
+  if (patchedSource.includes("document.documentElement.dataset.codexOs===`linux`&&g.opaqueWindows==null&&(g={...g,opaqueWindows:!0})")) {
+    // Already patched.
+  } else if (patchedSource.includes(appMainRuntimeNeedle)) {
+    patchedSource = patchedSource.replace(appMainRuntimeNeedle, appMainRuntimePatch);
+  }
+
   if (!runtimeDefaultPatched()) {
     const currentRuntimeRegex =
       /let\{data:([A-Za-z_$][\w$]*)\}=Qc\([A-Za-z_$][\w$]*\.APPEARANCE_LIGHT_CHROME_THEME,[A-Za-z_$][\w$]*\).*?let\{data:([A-Za-z_$][\w$]*)\}=Qc\([A-Za-z_$][\w$]*\.APPEARANCE_DARK_CHROME_THEME,[A-Za-z_$][\w$]*\).*?let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`light`\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*),/;
@@ -155,10 +166,10 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
   const supportedFeatures = new Set([
     "apps",
     "memories",
+    "mentions_v2",
     "plugins",
     "remote_control",
     "tool_call_mcp_elicitation",
-    "tool_search",
     "tool_suggest",
   ]);
   const defaultFeaturesMarker = "statsig_default_enable_features";
@@ -214,6 +225,63 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
   ].join("");
 }
 
+function applySubagentNicknameMetadataPatch(currentSource) {
+  let patchedSource = currentSource;
+  const sourceShapePatchedMarker = "`subAgent`in e?e.subAgent:`subagent`in e?e.subagent:null";
+  const nicknamePatchedMarker =
+    "Zl(e.agentNickname)??Zl(e.agent_nickname)??Zl(B(e.source)?.agentNickname)";
+
+  const sourceShapeNeedle =
+    "function Mi(e){return`subAgent`in e?e.subAgent:null}function Ni(e){return typeof e==`string`?Pi():`thread_spawn`in e?{parentThreadId:j(e.thread_spawn.parent_thread_id),depth:e.thread_spawn.depth,agentNickname:e.thread_spawn.agent_nickname,agentRole:e.thread_spawn.agent_role}:Pi()}";
+  const sourceShapePatch =
+    "function Mi(e){return`subAgent`in e?e.subAgent:`subagent`in e?e.subagent:null}function Ni(e){return typeof e==`string`?Pi():`thread_spawn`in e?{parentThreadId:j(e.thread_spawn.parent_thread_id),depth:e.thread_spawn.depth,agentNickname:e.thread_spawn.agent_nickname,agentRole:e.thread_spawn.agent_role}:Pi()}";
+  if (patchedSource.includes(sourceShapePatchedMarker)) {
+    // Already patched.
+  } else if (patchedSource.includes(sourceShapeNeedle)) {
+    patchedSource = patchedSource.replace(sourceShapeNeedle, sourceShapePatch);
+  } else {
+    const sourceShapeRegex =
+      /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return`subAgent`in \2\?\2\.subAgent:null\}function ([A-Za-z_$][\w$]*)\(/u;
+    if (sourceShapeRegex.test(patchedSource)) {
+      patchedSource = patchedSource.replace(
+        sourceShapeRegex,
+        "function $1($2){return`subAgent`in $2?$2.subAgent:`subagent`in $2?$2.subagent:null}function $3(",
+      );
+    }
+  }
+
+  const nicknameNeedle =
+    "function Xl(e){return e==null?null:Zl(e.agentNickname)??Zl(B(e.source)?.agentNickname)}";
+  const nicknamePatch =
+    "function Xl(e){return e==null?null:Zl(e.agentNickname)??Zl(e.agent_nickname)??Zl(B(e.source)?.agentNickname)}";
+  if (patchedSource.includes(nicknamePatchedMarker)) {
+    // Already patched.
+  } else if (patchedSource.includes(nicknameNeedle)) {
+    patchedSource = patchedSource.replace(nicknameNeedle, nicknamePatch);
+  } else {
+    const nicknameRegex =
+      /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return \2==null\?null:([A-Za-z_$][\w$]*)\(\2\.agentNickname\)\?\?\3\(([A-Za-z_$][\w$]*)\(\2\.source\)\?\.agentNickname\)\}/u;
+    if (nicknameRegex.test(patchedSource)) {
+      patchedSource = patchedSource.replace(
+        nicknameRegex,
+        "function $1($2){return $2==null?null:$3($2.agentNickname)??$3($2.agent_nickname)??$3($4($2.source)?.agentNickname)}",
+      );
+    }
+  }
+
+  if (
+    patchedSource === currentSource &&
+    !(currentSource.includes(sourceShapePatchedMarker) && currentSource.includes(nicknamePatchedMarker)) &&
+    (currentSource.includes("agentNickname") ||
+      currentSource.includes("agent_nickname") ||
+      currentSource.includes("thread_spawn"))
+  ) {
+    console.warn("WARN: Could not find subagent nickname metadata needles — skipping metadata shape patch");
+  }
+
+  return patchedSource;
+}
+
 function applyBrowserAnnotationScreenshotPatch(currentSource) {
   let patchedSource = currentSource;
 
@@ -234,16 +302,45 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
       "if(ve&&M?.anchor.kind===`element`){let e=hl(M,y.current)??null,t=e==null?null:El(e);ke=t?.rect??Rl(M.anchor),je=t?.borderRadius,Ae=Xl(M.anchor,ke,_.width,_.height)}";
     const currentSelectedElementPatch =
       "if(ve&&M?.anchor.kind===`element`){ke=Rl(M.anchor),je=void 0,Ae=Xl(M.anchor,ke,_.width,_.height)}";
+    const currentCommentPreloadElementNeedle =
+      "if(M&&j?.annotation.anchor.kind===`element`){let e=tt==null?null:ed(tt);at=e?.rect??Td(j.annotation.anchor),st=e?.borderRadius,ot=Wd(j.annotation.anchor,at,S.width,S.height)}";
+    const currentCommentPreloadElementPatch =
+      "if(M&&j?.annotation.anchor.kind===`element`){at=Td(j.annotation.anchor),st=void 0,ot=Wd(j.annotation.anchor,at,S.width,S.height)}";
     const currentElementScreenshotRegex =
       /if\(([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\?\.anchor\.kind===`element`\)\{let e=[^;{}]+?\?\?null,t=e==null\?null:[A-Za-z_$][\w$]*\(e\);([A-Za-z_$][\w$]*)=t\?\.rect\?\?([A-Za-z_$][\w$]*)\(\2\.anchor\),([A-Za-z_$][\w$]*)=t\?\.borderRadius\}/;
+    const currentCommentPreloadElementRegex =
+      /if\(([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\?\.annotation\.anchor\.kind===`element`\)\{let e=([A-Za-z_$][\w$]*)==null\?null:[A-Za-z_$][\w$]*\(\3\);([A-Za-z_$][\w$]*)=e\?\.rect\?\?([A-Za-z_$][\w$]*)\(\2\.annotation\.anchor\),([A-Za-z_$][\w$]*)=e\?\.borderRadius,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\2\.annotation\.anchor,\4,([A-Za-z_$][\w$]*)\.width,([A-Za-z_$][\w$]*)\.height\)\}/;
     if (patchedSource.includes(currentSelectedElementNeedle)) {
       patchedSource = patchedSource.replace(currentSelectedElementNeedle, currentSelectedElementPatch);
+    } else if (patchedSource.includes(currentCommentPreloadElementNeedle)) {
+      patchedSource = patchedSource.replace(
+        currentCommentPreloadElementNeedle,
+        currentCommentPreloadElementPatch,
+      );
     } else if (currentElementScreenshotRegex.test(patchedSource)) {
       const currentElementScreenshotMatch = patchedSource.match(currentElementScreenshotRegex);
       const [, screenshotModeVar, selectedCommentVar, rectVar, anchorRectFn, radiusVar] = currentElementScreenshotMatch;
       patchedSource = patchedSource.replace(
         currentElementScreenshotRegex,
         `if(${screenshotModeVar}&&${selectedCommentVar}?.anchor.kind===\`element\`){${rectVar}=${anchorRectFn}(${selectedCommentVar}.anchor),${radiusVar}=void 0}`,
+      );
+    } else if (currentCommentPreloadElementRegex.test(patchedSource)) {
+      patchedSource = patchedSource.replace(
+        currentCommentPreloadElementRegex,
+        (
+          _match,
+          screenshotModeVar,
+          selectedAnnotationVar,
+          _connectedElementVar,
+          rectVar,
+          anchorRectFn,
+          radiusVar,
+          highlightClassVar,
+          highlightFn,
+          widthSourceVar,
+          heightSourceVar,
+        ) =>
+          `if(${screenshotModeVar}&&${selectedAnnotationVar}?.annotation.anchor.kind===\`element\`){${rectVar}=${anchorRectFn}(${selectedAnnotationVar}.annotation.anchor),${radiusVar}=void 0,${highlightClassVar}=${highlightFn}(${selectedAnnotationVar}.annotation.anchor,${rectVar},${widthSourceVar}.width,${heightSourceVar}.height)}`,
       );
     } else {
       console.warn("WARN: Could not find browser annotation screenshot element highlight — skipping screenshot anchor patch");
@@ -265,14 +362,25 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
     const currentMarkersPatch = "be=(ge?he:!ge&&ye!=null?A.filter(e=>e.id!==ye.id):A).flatMap";
     const currentSelectedMarkersNeedle = "Se=(!ve&&xe!=null?k.filter(e=>e.id!==xe.id):k).flatMap";
     const currentSelectedMarkersPatch = "Se=(ve?_e:!ve&&xe!=null?k.filter(e=>e.id!==xe.id):k).flatMap";
+    const currentCommentPreloadMarkersNeedle =
+      "Xe=(M?j?.kind===`comment`?ge:[]:Ye==null?ge:ge.filter(e=>e.id!==Ye.id)).flatMap";
+    const currentCommentPreloadMarkersPatch =
+      "Xe=(M?j?.kind===`comment`?ge.filter(e=>e.id===j.annotation.id):[]:Ye==null?ge:ge.filter(e=>e.id!==Ye.id)).flatMap";
     if (patchedSource.includes(currentMarkersPatch)) {
       // Already patched.
     } else if (patchedSource.includes(currentSelectedMarkersPatch)) {
+      // Already patched.
+    } else if (patchedSource.includes(currentCommentPreloadMarkersPatch)) {
       // Already patched.
     } else if (patchedSource.includes(currentMarkersNeedle)) {
       patchedSource = patchedSource.replace(currentMarkersNeedle, currentMarkersPatch);
     } else if (patchedSource.includes(currentSelectedMarkersNeedle)) {
       patchedSource = patchedSource.replace(currentSelectedMarkersNeedle, currentSelectedMarkersPatch);
+    } else if (patchedSource.includes(currentCommentPreloadMarkersNeedle)) {
+      patchedSource = patchedSource.replace(
+        currentCommentPreloadMarkersNeedle,
+        currentCommentPreloadMarkersPatch,
+      );
     } else {
       console.warn("WARN: Could not find browser annotation screenshot markers — skipping screenshot marker patch");
     }
@@ -349,6 +457,24 @@ function detectComposerFooterConversationIdVar(source, footerNeedles) {
 function applyPersistentRateLimitFooterPatch(currentSource) {
   let patchedSource = currentSource;
   const currentSymbols = detectCurrentRateLimitFooterSymbols(currentSource);
+  const currentComposerStatusNeedle =
+    "function zg(e){";
+  const currentComposerFooterFunction =
+    "function codexLinuxRateLimitFooter({conversationId:e,rateLimit:t}){try{let n=Et(),{activeMode:r}=or(e),i=r?.settings.model??null,a=sa(t),o=ta(t),s=da(a,{activeLimitName:o,selectedModel:i}),c=s.filter(kg).slice(0,2);c.length===0&&(c=da(a,{activeLimitName:o,selectedModel:null}).filter(kg).slice(0,2));if(c.length===0)return null;let l=c.map(e=>`${bg(e.bucket.windowDurationMins??null,n,{withColon:!1})} ${n.formatNumber(Yi(e.bucket.usedPercent??0),{maximumFractionDigits:0})}%`).join(` / `);return(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:l})}catch(e){return null}}";
+  const currentComposerFooterCallNeedle =
+    "children:[ue,de,W,fe,pe,me,G,he,_e,ve,ye,xe,Se,Ce,we,Te,Ee,Oe,Ae,je,Me]";
+  const currentComposerFooterCallPatch =
+    "children:[ue,de,W,fe,pe,me,G,he,_e,ve,ye,xe,Se,Ce,we,Te,Ee,De==null?null:(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:x,rateLimit:De}),Oe,Ae,je,Me]";
+  const currentPermissionsControlsNeedle =
+    /\(0,Q\.jsx\)\(([A-Za-z_$][\w$]*),\{conversationId:f,hostId:C,cwdOverride:w\}\),\(0,Q\.jsx\)\(([A-Za-z_$][\w$]*),\{conversationId:f,hasGoal:y,isGoalActionAvailable:b,onClearGoal:x,showDivider:!0\}\)/;
+  const shouldWarnAboutMissingFooterHelper =
+    currentSource.includes("function TF(e)") ||
+    currentSource.includes("function Cz(e)") ||
+    currentSource.includes("children:[Ut,Wt,Gt]") ||
+    currentSource.includes("(0,Q.jsx)(nz,{conversationId:f,hostId:C,cwdOverride:w})") ||
+    currentPermissionsControlsNeedle.test(currentSource) ||
+    (currentSource.includes(currentComposerStatusNeedle) &&
+      currentSource.includes(currentComposerFooterCallNeedle));
   const homeFooterGroupNeedle =
     "t[131]!==Ut||t[132]!==Wt||t[133]!==Gt?(Kt=(0,Q.jsxs)(`div`,{className:`flex min-w-0 flex-1 flex-nowrap items-center gap-1`,children:[Ut,Wt,Gt]}),t[131]=Ut,t[132]=Wt,t[133]=Gt,t[134]=Kt):Kt=t[134]";
   const previousHomeOnlyCall =
@@ -382,6 +508,11 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
       patchedSource = patchedSource.replace(
         currentSymbols.insertionNeedle,
         `${currentFooterFunction}${currentSymbols.insertionNeedle}`,
+      );
+    } else if (patchedSource.includes(currentComposerStatusNeedle)) {
+      patchedSource = patchedSource.replace(
+        currentComposerStatusNeedle,
+        `${currentComposerFooterFunction}${currentComposerStatusNeedle}`,
       );
     } else if (patchedSource.includes(legacyInsertionNeedle)) {
       patchedSource = patchedSource.replace(
@@ -418,12 +549,7 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
 
   const hasFooterFunction = patchedSource.includes("function codexLinuxRateLimitFooter(");
   if (!hasFooterFunction) {
-    if (
-      currentSource.includes("composer-footer flex flex-nowrap") ||
-      currentSource.includes("function Cz(e)") ||
-      currentSource.includes("children:[Ut,Wt,Gt]") ||
-      currentSource.includes("(0,Q.jsx)(nz,{conversationId:f,hostId:C,cwdOverride:w})")
-    ) {
+    if (shouldWarnAboutMissingFooterHelper) {
       console.warn("WARN: Could not insert persistent rate limit footer helper — skipping composer footer limit patch");
     }
     return currentSource;
@@ -485,8 +611,6 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
   if (patchedSource.includes(permissionsControlsNeedle)) {
     patchedSource = patchedSource.replace(permissionsControlsNeedle, permissionsControlsPatch);
   }
-  const currentPermissionsControlsNeedle =
-    /\(0,Q\.jsx\)\(([A-Za-z_$][\w$]*),\{conversationId:f,hostId:C,cwdOverride:w\}\),\(0,Q\.jsx\)\(([A-Za-z_$][\w$]*),\{conversationId:f,hasGoal:y,isGoalActionAvailable:b,onClearGoal:x,showDivider:!0\}\)/;
   if (currentPermissionsControlsNeedle.test(patchedSource)) {
     patchedSource = patchedSource.replace(
       currentPermissionsControlsNeedle,
@@ -497,14 +621,41 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
   if (
     patchedSource === currentSource &&
     !currentSource.includes("function codexLinuxRateLimitFooter(") &&
-    (currentSource.includes("composer-footer flex flex-nowrap") ||
-      currentSource.includes("function TF(e)") ||
-      currentSource.includes("function Cz(e)"))
+    shouldWarnAboutMissingFooterHelper
   ) {
     console.warn("WARN: Could not find persistent rate limit footer needles — skipping composer footer limit patch");
   }
+  if (patchedSource.includes(currentComposerFooterCallPatch)) {
+    // Already patched.
+  } else if (patchedSource.includes(currentComposerFooterCallNeedle)) {
+    patchedSource = patchedSource.replace(
+      currentComposerFooterCallNeedle,
+      currentComposerFooterCallPatch,
+    );
+  }
 
   return patchedSource;
+}
+
+function applyLinuxFastModeModelGuardPatch(currentSource) {
+  const tierLookupNeedle =
+    /([A-Za-z_$][\w$]*)\.serviceTiers\.length\s*>\s*0\s*\|\|\s*\1\.additionalSpeedTiers(?:\?\.|\.)includes\(([^()]*)\)(?:\s*===\s*!0)?/gu;
+  const patchedSource = currentSource.replace(
+    tierLookupNeedle,
+    (match, modelVar, fastTierExpr) =>
+      `(${modelVar}?.serviceTiers?.length??0)>0||${modelVar}?.additionalSpeedTiers?.includes(${fastTierExpr})===!0`,
+  );
+  if (patchedSource !== currentSource) {
+    return patchedSource;
+  }
+
+  if (/serviceTiers\.length\s*>\s*0/u.test(currentSource) && currentSource.includes("additionalSpeedTiers")) {
+    console.warn(
+      "WARN: Could not find fast-mode model guard insertion point — skipping fast-mode crash guard patch",
+    );
+  }
+
+  return currentSource;
 }
 
 function patchCommentPreloadBundle(extractedDir) {
@@ -531,5 +682,7 @@ module.exports = {
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
+  applyLinuxFastModeModelGuardPatch,
+  applySubagentNicknameMetadataPatch,
   patchCommentPreloadBundle,
 };

@@ -188,19 +188,27 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
     }
   }
 
-  const applyLayoutNeedle =
-    "this.setWindowBounds(e,r.windowBounds),this.sendLayoutToRenderer(e)}getLayout(e){";
-  const applyLayoutPatch =
-    "this.setWindowBounds(e,r.windowBounds),this.sendLayoutToRenderer(e),process.platform===`linux`&&this.applyPointerInteractivityPolicy()}getLayout(e){";
-  const previousApplyLayoutPatch =
-    "this.setWindowBounds(e,r.windowBounds),this.sendLayoutToRenderer(e),this.codexLinuxSyncAvatarPointerInteractivity(e)&&this.applyPointerInteractivityPolicy()}getLayout(e){";
-  if (patchedSource.includes(previousApplyLayoutPatch)) {
-    patchedSource = patchedSource.replace(previousApplyLayoutPatch, applyLayoutPatch);
-  } else if (patchedSource.includes(applyLayoutNeedle)) {
-    patchedSource = patchedSource.replace(applyLayoutNeedle, applyLayoutPatch);
+  const currentApplyLayoutPatchRegex =
+    /this\.setWindowBounds\(e,([A-Za-z_$][\w$]*)\.windowBounds\),this\.sendLayoutToRenderer\(e\),process\.platform===`linux`&&this\.applyPointerInteractivityPolicy\(\)\}getLayout\(e\)\{/;
+  const previousApplyLayoutPatchRegex =
+    /this\.setWindowBounds\(e,([A-Za-z_$][\w$]*)\.windowBounds\),this\.sendLayoutToRenderer\(e\),this\.codexLinuxSyncAvatarPointerInteractivity\(e\)&&this\.applyPointerInteractivityPolicy\(\)\}getLayout\(e\)\{/;
+  const applyLayoutRegex =
+    /this\.setWindowBounds\(e,([A-Za-z_$][\w$]*)\.windowBounds\),this\.sendLayoutToRenderer\(e\)\}getLayout\(e\)\{/;
+  if (currentApplyLayoutPatchRegex.test(patchedSource)) {
+    // Already patched.
+  } else if (previousApplyLayoutPatchRegex.test(patchedSource)) {
+    patchedSource = patchedSource.replace(
+      previousApplyLayoutPatchRegex,
+      "this.setWindowBounds(e,$1.windowBounds),this.sendLayoutToRenderer(e),process.platform===`linux`&&this.applyPointerInteractivityPolicy()}getLayout(e){",
+    );
+  } else if (applyLayoutRegex.test(patchedSource)) {
+    patchedSource = patchedSource.replace(
+      applyLayoutRegex,
+      "this.setWindowBounds(e,$1.windowBounds),this.sendLayoutToRenderer(e),process.platform===`linux`&&this.applyPointerInteractivityPolicy()}getLayout(e){",
+    );
   } else if (
     patchedSource.includes("avatar-overlay") &&
-    !patchedSource.includes(applyLayoutPatch)
+    !currentApplyLayoutPatchRegex.test(patchedSource)
   ) {
     console.warn(
       "WARN: Could not find avatar overlay layout application — skipping Linux avatar overlay layout sync patch",

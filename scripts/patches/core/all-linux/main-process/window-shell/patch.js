@@ -4,8 +4,10 @@ const {
   applyLinuxWindowOptionsPatch,
   applyLinuxMenuPatch,
   applyLinuxSetIconPatch,
+  applyLinuxReadyToShowWindowStatePatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxFileManagerPatch,
+  applyLinuxBuildInfoTrayPatch,
   applyLinuxTrayPatch,
   applyLinuxSingleInstancePatch,
   applyLinuxGitOriginsSourceFallbackPatch,
@@ -35,6 +37,13 @@ module.exports = [
     apply: (source, context) => applyLinuxSetIconPatch(source, context.iconAsset),
   },
   {
+    id: "linux-ready-to-show-window-state",
+    phase: "main-bundle",
+    order: 75,
+    ciPolicy: "optional",
+    apply: applyLinuxReadyToShowWindowStatePatch,
+  },
+  {
     id: "linux-opaque-background",
     phase: "main-bundle",
     order: 80,
@@ -61,6 +70,13 @@ module.exports = [
     order: 110,
     ciPolicy: "optional",
     apply: (source, context) => applyLinuxTrayPatch(source, context.iconPathExpression),
+  },
+  {
+    id: "linux-build-info-tray",
+    phase: "main-bundle",
+    order: 115,
+    ciPolicy: "optional",
+    apply: applyLinuxBuildInfoTrayPatch,
   },
   {
     id: "linux-single-instance",
