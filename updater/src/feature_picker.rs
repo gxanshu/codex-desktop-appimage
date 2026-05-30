@@ -253,11 +253,12 @@ fn read_catalog(config: &RuntimeConfig, source: &Path) -> Result<Vec<CatalogEntr
     Ok(entries)
 }
 
-/// Reads the currently-enabled feature ids. Prefers the saved feature config
-/// (the picker's own prior answer), else `linux-features.js --enabled` (which
-/// reads the source `features.json`). Errors degrade to an empty set.
+/// Reads the currently-enabled feature ids. Prefers the saved picker config,
+/// then the installed builder bundle's preserved feature config, then
+/// `linux-features.js --enabled` from the selected source. Errors degrade to an
+/// empty set.
 fn read_enabled(config: &RuntimeConfig, source: &Path) -> std::collections::HashSet<String> {
-    if let Some(path) = config::feature_config_path() {
+    if let Some(path) = config::effective_feature_config_path(config) {
         if let Ok(content) = std::fs::read_to_string(&path) {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
                 if let Some(array) = value.get("enabled").and_then(|v| v.as_array()) {
@@ -583,6 +584,28 @@ if (arg === "--features-json") {
             sources.is_empty(),
             "recorded candidate failures must not use the installed catalog"
         );
+    }
+
+    #[test]
+    fn enabled_reads_builder_feature_config_when_saved_picker_config_is_absent() {
+        let _g = env_lock();
+        let root = tempdir().unwrap();
+        let settings = tempdir().unwrap();
+        write_fake_catalog_script(root.path());
+        let builder_config = root.path().join("linux-features/features.json");
+        std::fs::create_dir_all(builder_config.parent().unwrap()).unwrap();
+        std::fs::write(&builder_config, r#"{"enabled":["alpha"]}"#).unwrap();
+
+        let settings_file = settings.path().join("settings.json");
+        std::env::set_var("CODEX_LINUX_SETTINGS_FILE", &settings_file);
+        let config = base_config(root.path());
+
+        assert_eq!(
+            read_enabled(&config, root.path()),
+            std::collections::HashSet::from(["alpha".to_string()])
+        );
+
+        std::env::remove_var("CODEX_LINUX_SETTINGS_FILE");
     }
 
     #[test]

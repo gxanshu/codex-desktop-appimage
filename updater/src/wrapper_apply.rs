@@ -132,7 +132,7 @@ async fn apply_user_local(
     paths: &RuntimePaths,
     candidate_commit: Option<&str>,
 ) -> Result<()> {
-    let feature_config = picked_feature_config();
+    let feature_config = effective_feature_config(config);
     if let Some(helper) = user_local_update_helper() {
         info!(helper = %helper.display(), "applying wrapper update via user-local helper");
         let mut cmd = Command::new(&helper);
@@ -184,11 +184,10 @@ async fn apply_user_local(
     Ok(())
 }
 
-/// The user's saved feature selection from the in-app Update feature picker, if
-/// the file exists. Threaded into both apply paths so the rebuild stages exactly
-/// those features. Absent ⇒ `None` (the build keeps its existing default).
-fn picked_feature_config() -> Option<PathBuf> {
-    crate::config::feature_config_path().filter(|path| path.is_file())
+/// The feature selection to use for this rebuild: saved picker selection first,
+/// then the installed builder bundle's preserved feature config.
+fn effective_feature_config(config: &RuntimeConfig) -> Option<PathBuf> {
+    crate::config::effective_feature_config_path(config)
 }
 
 fn user_local_update_helper() -> Option<PathBuf> {

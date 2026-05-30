@@ -135,10 +135,8 @@ pub async fn build_update_from(
     // writes it to a stable per-user path) so the rebuild stages exactly those
     // features. Only set it when the file actually exists; an absent path would
     // make linux-features.js see an empty enabled set and stage nothing.
-    if let Some(feature_config) = crate::config::feature_config_path() {
-        if feature_config.is_file() {
-            install.env("CODEX_LINUX_FEATURES_CONFIG", &feature_config);
-        }
+    if let Some(feature_config) = crate::config::effective_feature_config_path(config) {
+        install.env("CODEX_LINUX_FEATURES_CONFIG", &feature_config);
     }
     run_and_log(&mut install, &workspace.install_log)
         .await

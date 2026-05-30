@@ -210,6 +210,7 @@ pub fn settings_wrapper_updates_override() -> Option<bool> {
 }
 
 const FEATURE_CONFIG_FILE: &str = "linux-features.json";
+const BUNDLED_FEATURE_CONFIG_FILE: &str = "features.json";
 const FEATURE_PICKER_ON_UPDATE_SETTING_KEY: &str = "codex-linux-feature-picker-on-update";
 
 /// Resolves the stable per-user feature-config path
@@ -221,6 +222,21 @@ pub fn feature_config_path() -> Option<PathBuf> {
     let settings = app_settings_path()?;
     let dir = settings.parent()?;
     Some(dir.join(FEATURE_CONFIG_FILE))
+}
+
+/// Returns the feature config that should drive a rebuild. A saved per-user
+/// picker selection wins; otherwise preserve the currently installed/bundled
+/// feature selection from the builder bundle.
+pub fn effective_feature_config_path(config: &RuntimeConfig) -> Option<PathBuf> {
+    feature_config_path()
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            let bundled = config
+                .builder_bundle_root
+                .join("linux-features")
+                .join(BUNDLED_FEATURE_CONFIG_FILE);
+            bundled.is_file().then_some(bundled)
+        })
 }
 
 /// Reads the user's "ask which features to enable on update" preference (the
@@ -365,6 +381,49 @@ mod tests {
             ),
             Some(false)
         );
+    }
+
+    #[test]
+    fn effective_feature_config_prefers_saved_picker_config_then_builder_config() -> Result<()> {
+        let _guard = crate::test_util::env_lock();
+        let temp = tempdir()?;
+        let settings_dir = temp.path().join("settings");
+        let settings_file = settings_dir.join("settings.json");
+        let saved_feature_config = settings_dir.join("linux-features.json");
+        let builder_feature_config = temp.path().join("builder/linux-features/features.json");
+
+        fs::create_dir_all(builder_feature_config.parent().unwrap())?;
+        fs::write(
+            &builder_feature_config,
+            r#"{"enabled":["codex-wrapper-updater"]}"#,
+        )?;
+        std::env::set_var("CODEX_LINUX_SETTINGS_FILE", &settings_file);
+
+        let paths = RuntimePaths {
+            config_file: temp.path().join("config/config.toml"),
+            state_file: temp.path().join("state/state.json"),
+            log_file: temp.path().join("state/service.log"),
+            cache_dir: temp.path().join("cache"),
+            state_dir: temp.path().join("state"),
+            config_dir: temp.path().join("config"),
+        };
+        let mut config = RuntimeConfig::default_with_paths(&paths);
+        config.builder_bundle_root = temp.path().join("builder");
+
+        assert_eq!(
+            effective_feature_config_path(&config),
+            Some(builder_feature_config.clone())
+        );
+
+        fs::create_dir_all(&settings_dir)?;
+        fs::write(&saved_feature_config, r#"{"enabled":["read-aloud"]}"#)?;
+        assert_eq!(
+            effective_feature_config_path(&config),
+            Some(saved_feature_config)
+        );
+
+        std::env::remove_var("CODEX_LINUX_SETTINGS_FILE");
+        Ok(())
     }
 
     #[test]

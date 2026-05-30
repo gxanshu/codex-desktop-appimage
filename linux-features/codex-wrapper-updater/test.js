@@ -55,6 +55,8 @@ test("main bundle patch writes app-state wrapper marker", () => {
 
   assert.match(patched, /"codex-linux-wrapper-updater":async/);
   assert.match(patched, /CODEX_LINUX_APP_STATE_DIR/);
+  assert.match(patched, /pick-features/);
+  assert.match(patched, /codex-linux-feature-picker-on-update/);
   assert.match(patched, /codex-wrapper-updater/);
   assert.doesNotMatch(patched, /wrapper-update-pending/);
 });
