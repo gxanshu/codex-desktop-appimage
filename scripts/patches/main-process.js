@@ -472,6 +472,7 @@ function applyLinuxExplicitIpcQuitPatch(currentSource) {
 
 function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   let patchedSource = currentSource;
+  const electronVar = requireName(currentSource, "electron") ?? "n";
 
   const trayGuardNeedle =
     "process.platform!==`win32`&&process.platform!==`darwin`?null:";
@@ -482,7 +483,9 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
     // Already patched.
   } else if (
     trayGuardIndex !== -1 &&
-    patchedSource.slice(trayGuardIndex, trayGuardIndex + TRAY_GUARD_LOOKAHEAD).includes("new n.Tray")
+    /new [A-Za-z_$][\w$]*\.Tray\(/.test(
+      patchedSource.slice(trayGuardIndex, trayGuardIndex + TRAY_GUARD_LOOKAHEAD),
+    )
   ) {
     patchedSource = patchedSource.replace(trayGuardNeedle, trayGuardPatch);
   } else {
@@ -491,13 +494,21 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
 
   if (iconPathExpression != null) {
     const trayIconNeedle =
-      "for(let e of o){let t=n.nativeImage.createFromPath(e);if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null}}return{defaultIcon:await n.app.getFileIcon(process.execPath,{size:process.platform===`win32`?`small`:`normal`}),chronicleRunningIcon:null}}";
+      `for(let e of o){let t=${electronVar}.nativeImage.createFromPath(e);if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null}}return{defaultIcon:await ${electronVar}.app.getFileIcon(process.execPath,{size:process.platform===\`win32\`?\`small\`:\`normal\`}),chronicleRunningIcon:null}}`;
     const trayIconPatch =
-      `for(let e of o){let t=n.nativeImage.createFromPath(e);if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null}}if(process.platform===\`linux\`){let e=n.nativeImage.createFromPath(${iconPathExpression});if(!e.isEmpty())return{defaultIcon:e,chronicleRunningIcon:null}}return{defaultIcon:await n.app.getFileIcon(process.execPath,{size:process.platform===\`win32\`?\`small\`:\`normal\`}),chronicleRunningIcon:null}}`;
+      `for(let e of o){let t=${electronVar}.nativeImage.createFromPath(e);if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null}}if(process.platform===\`linux\`){let e=${electronVar}.nativeImage.createFromPath(${iconPathExpression});if(!e.isEmpty())return{defaultIcon:e,chronicleRunningIcon:null}}return{defaultIcon:await ${electronVar}.app.getFileIcon(process.execPath,{size:process.platform===\`win32\`?\`small\`:\`normal\`}),chronicleRunningIcon:null}}`;
     if (patchedSource.includes(`nativeImage.createFromPath(${iconPathExpression})`)) {
       // Already patched.
     } else if (patchedSource.includes(trayIconNeedle)) {
       patchedSource = patchedSource.replace(trayIconNeedle, trayIconPatch);
+    } else if (
+      /for\(let ([A-Za-z_$][\w$]*) of ([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.nativeImage\.createFromPath\(\1\);if\(!\3\.isEmpty\(\)\)return\{defaultIcon:\3,chronicleRunningIcon:null\}\}return\{defaultIcon:await \4\.app\.getFileIcon\(process\.execPath,\{size:process\.platform===`win32`\?`small`:`normal`\}\),chronicleRunningIcon:null\}\}/.test(patchedSource)
+    ) {
+      patchedSource = patchedSource.replace(
+        /for\(let ([A-Za-z_$][\w$]*) of ([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.nativeImage\.createFromPath\(\1\);if\(!\3\.isEmpty\(\)\)return\{defaultIcon:\3,chronicleRunningIcon:null\}\}return\{defaultIcon:await \4\.app\.getFileIcon\(process\.execPath,\{size:process\.platform===`win32`\?`small`:`normal`\}\),chronicleRunningIcon:null\}\}/,
+        (_match, iconPathVar, candidatesVar, imageVar, electronAlias) =>
+          `for(let ${iconPathVar} of ${candidatesVar}){let ${imageVar}=${electronAlias}.nativeImage.createFromPath(${iconPathVar});if(!${imageVar}.isEmpty())return{defaultIcon:${imageVar},chronicleRunningIcon:null}}if(process.platform===\`linux\`){let ${iconPathVar}=${electronAlias}.nativeImage.createFromPath(${iconPathExpression});if(!${iconPathVar}.isEmpty())return{defaultIcon:${iconPathVar},chronicleRunningIcon:null}}return{defaultIcon:await ${electronAlias}.app.getFileIcon(process.execPath,{size:process.platform===\`win32\`?\`small\`:\`normal\`}),chronicleRunningIcon:null}}`,
+      );
     } else {
       console.warn("WARN: Could not find tray icon fallback — skipping Linux tray icon patch");
     }
@@ -525,9 +536,12 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   const trayContextMethodNeedle =
     "trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(";
   const trayContextMethodPatch =
-    "trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};setLinuxTrayContextMenu(){let e=n.Menu.buildFromTemplate(this.getNativeTrayMenuItems());this.tray.setContextMenu?.(e);return e}constructor(";
+    `trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};setLinuxTrayContextMenu(){let e=${electronVar}.Menu.buildFromTemplate(this.getNativeTrayMenuItems());this.tray.setContextMenu?.(e);return e}constructor(`;
   if (patchedSource.includes("setLinuxTrayContextMenu(){")) {
-    // Already patched.
+    patchedSource = patchedSource.replace(
+      /setLinuxTrayContextMenu\(\)\{let e=[A-Za-z_$][\w$]*\.Menu\.buildFromTemplate\(this\.getNativeTrayMenuItems\(\)\);/,
+      `setLinuxTrayContextMenu(){let e=${electronVar}.Menu.buildFromTemplate(this.getNativeTrayMenuItems());`,
+    );
   } else if (patchedSource.includes(trayContextMethodNeedle)) {
     patchedSource = patchedSource.replace(trayContextMethodNeedle, trayContextMethodPatch);
   } else {
@@ -555,17 +569,25 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   }
 
   const trayMenuBuildNeedle =
-    "openNativeTrayMenu(){this.updateChronicleTrayIcon();let e=n.Menu.buildFromTemplate(this.getNativeTrayMenuItems());";
+    `openNativeTrayMenu(){this.updateChronicleTrayIcon();let e=${electronVar}.Menu.buildFromTemplate(this.getNativeTrayMenuItems());`;
   const trayMenuBuildExistingPatch =
-    "openNativeTrayMenu(){this.updateChronicleTrayIcon();let e=process.platform===`linux`&&this.setLinuxTrayContextMenu?this.setLinuxTrayContextMenu():n.Menu.buildFromTemplate(this.getNativeTrayMenuItems());";
+    `openNativeTrayMenu(){this.updateChronicleTrayIcon();let e=process.platform===\`linux\`&&this.setLinuxTrayContextMenu?this.setLinuxTrayContextMenu():${electronVar}.Menu.buildFromTemplate(this.getNativeTrayMenuItems());`;
   const trayMenuBuildPatch =
-    "openNativeTrayMenu(){if(process.platform===`linux`&&(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress()))return;this.updateChronicleTrayIcon();let e=process.platform===`linux`&&this.setLinuxTrayContextMenu?this.setLinuxTrayContextMenu():n.Menu.buildFromTemplate(this.getNativeTrayMenuItems());";
+    `openNativeTrayMenu(){if(process.platform===\`linux\`&&(typeof codexLinuxIsQuitInProgress===\`function\`&&codexLinuxIsQuitInProgress()))return;this.updateChronicleTrayIcon();let e=process.platform===\`linux\`&&this.setLinuxTrayContextMenu?this.setLinuxTrayContextMenu():${electronVar}.Menu.buildFromTemplate(this.getNativeTrayMenuItems());`;
+  const trayMenuBuildAnyAliasRegex =
+    /openNativeTrayMenu\(\)\{this\.updateChronicleTrayIcon\(\);let e=([A-Za-z_$][\w$]*)\.Menu\.buildFromTemplate\(this\.getNativeTrayMenuItems\(\)\);/;
+  const trayMenuBuildExistingAnyAliasRegex =
+    /openNativeTrayMenu\(\)\{this\.updateChronicleTrayIcon\(\);let e=process\.platform===`linux`&&this\.setLinuxTrayContextMenu\?this\.setLinuxTrayContextMenu\(\):([A-Za-z_$][\w$]*)\.Menu\.buildFromTemplate\(this\.getNativeTrayMenuItems\(\)\);/;
   if (patchedSource.includes("openNativeTrayMenu(){if(process.platform===`linux`&&(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress()))return;")) {
     // Already patched.
   } else if (patchedSource.includes(trayMenuBuildExistingPatch)) {
     patchedSource = patchedSource.replace(trayMenuBuildExistingPatch, trayMenuBuildPatch);
+  } else if (trayMenuBuildExistingAnyAliasRegex.test(patchedSource)) {
+    patchedSource = patchedSource.replace(trayMenuBuildExistingAnyAliasRegex, trayMenuBuildPatch);
   } else if (patchedSource.includes(trayMenuBuildNeedle)) {
     patchedSource = patchedSource.replace(trayMenuBuildNeedle, trayMenuBuildPatch);
+  } else if (trayMenuBuildAnyAliasRegex.test(patchedSource)) {
+    patchedSource = patchedSource.replace(trayMenuBuildAnyAliasRegex, trayMenuBuildPatch);
   } else {
     console.warn("WARN: Could not find tray native menu builder — skipping Linux tray context menu builder patch");
   }
@@ -673,10 +695,11 @@ function applyLinuxBuildInfoTrayPatch(currentSource) {
   const trayMenuRegex = /getNativeTrayMenuItems\(\)\{[^]*?return\[/g;
   const classRegex = /var [A-Za-z_$][\w$]*=class\{[^]*?getNativeTrayMenuItems\(\)\{[^]*?return\[/;
   const helpMenuPattern = /\{role:`help`,id:[A-Za-z_$][\w$]*\.bn\.help,submenu:\[/;
+  const currentHelpMenuPattern = /\{role:`help`,id:[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\.help,submenu:\[/;
   const helperInsertionIndex = findLinuxBuildInfoHelperInsertionIndex(
     currentSource,
     currentSource.match(classRegex),
-    currentSource.match(helpMenuPattern),
+    currentSource.match(helpMenuPattern) ?? currentSource.match(currentHelpMenuPattern),
   );
   const canInstallHelper = hasHelper || helperInsertionIndex != null;
   const trayMenuMatch = patchedSource.match(trayMenuRegex);
@@ -692,9 +715,9 @@ function applyLinuxBuildInfoTrayPatch(currentSource) {
     changed = true;
   }
 
-  const helpMenuRegex = /\{role:`help`,id:[A-Za-z_$][\w$]*\.bn\.help,submenu:\[/g;
+  const helpMenuRegex = /\{role:`help`,id:[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\.help,submenu:\[/g;
   if (
-    !/\{role:`help`,id:[A-Za-z_$][\w$]*\.bn\.help,submenu:\[\.\.\.process\.platform===`linux`\?\[\{label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}\},\{type:`separator`\}\]:\[\],/.test(patchedSource)
+    !/\{role:`help`,id:[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\.help,submenu:\[\.\.\.process\.platform===`linux`\?\[\{label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}\},\{type:`separator`\}\]:\[\],/.test(patchedSource)
   ) {
     if (canInstallHelper) {
       let patchedHelpMenu = false;
@@ -716,7 +739,7 @@ function applyLinuxBuildInfoTrayPatch(currentSource) {
   }
 
   const classMatch = patchedSource.match(classRegex);
-  const helpMenuMatch = patchedSource.match(helpMenuPattern);
+  const helpMenuMatch = patchedSource.match(helpMenuPattern) ?? patchedSource.match(currentHelpMenuPattern);
   const helperIndex = findLinuxBuildInfoHelperInsertionIndex(patchedSource, classMatch, helpMenuMatch);
   if (helperIndex == null) {
     console.warn("WARN: Could not find build info helper insertion point — skipping Linux build info patch");
@@ -948,7 +971,7 @@ function applyLinuxChromeExtensionStatusPatch(currentSource) {
   }
 
   const replacement =
-    `function codexLinuxChromeProfileRoots({homeDir:e,platform:t}){return t===\`linux\`?[(0,${pathVar}.join)(e,\`.config\`,\`BraveSoftware\`,\`Brave-Browser\`),(0,${pathVar}.join)(e,\`.config\`,\`google-chrome\`),(0,${pathVar}.join)(e,\`.config\`,\`google-chrome-beta\`),(0,${pathVar}.join)(e,\`.config\`,\`google-chrome-unstable\`),(0,${pathVar}.join)(e,\`.config\`,\`chromium\`)]:[]}function codexLinuxChromeHasExtension({extensionId:e,homeDir:t,platform:n}){if(n!==\`linux\`)return!1;let r=${extensionIdValidatorName}(e);for(let e of codexLinuxChromeProfileRoots({homeDir:t,platform:n})){if(!(0,${fsVar}.existsSync)(e))continue;for(let t of (0,${fsVar}.readdirSync)(e,{withFileTypes:!0}))if(t.isDirectory()&&(0,${fsVar}.existsSync)((0,${pathVar}.join)(e,t.name,\`Extensions\`,r)))return!0}return!1}function codexLinuxChromeCommand(){let e=(process.env.PATH??\`\`).split(\`:\`);for(let t of[\`brave-browser\`,\`brave\`,\`google-chrome\`,\`google-chrome-stable\`,\`chromium-browser\`,\`chromium\`])for(let n of e){if(n.length===0)continue;let e=(0,${pathVar}.join)(n,t);try{if((0,${fsVar}.existsSync)(e)&&(0,${fsVar}.statSync)(e).isFile())return e}catch{}}return null}function ${statusFunctionName}({extensionId:e,homeDir:t=(0,${osVar}.homedir)(),localAppDataDir:n=process.env.LOCALAPPDATA,platform:a=process.platform}){if(a===\`linux\`)return codexLinuxChromeHasExtension({extensionId:e,homeDir:t,platform:a});let s=${extensionIdValidatorName}(e),c=${profileDirFunctionName}({homeDir:t,localAppDataDir:n,platform:a});return c==null||!(0,${fsVar}.existsSync)(c)?!1:(0,${fsVar}.readdirSync)(c,{withFileTypes:!0}).some(e=>e.isDirectory()&&(0,${fsVar}.existsSync)((0,${pathVar}.join)(c,e.name,\`Extensions\`,s)))}async function ${openFunctionName}({extensionId:e,platform:t=process.platform,detectChromeCommand:n=${detectChromeFunctionName},runCommand:r=${runCommandFunctionName}}){if(t===\`darwin\`){await r(${macOpenFunctionName},[\`-b\`,${macBundleIdName},${extensionUrlFunctionName}(e)]);return}if(t===\`win32\`){let t=n();if(t==null)throw Error(\`Google Chrome is not installed\`);await r(t,[${extensionUrlFunctionName}(e)]);return}if(t===\`linux\`){let t=codexLinuxChromeCommand()??n();if(t==null)throw Error(\`Google Chrome, Brave, or Chromium is not installed\`);await r(t,[${extensionUrlFunctionName}(e)]);return}throw Error(\`Opening Chrome extension settings is only supported on macOS, Windows, and Linux\`)}`;
+    `function codexLinuxChromeProfileRoots({homeDir:__codexHomeDir,platform:__codexPlatform}){return __codexPlatform===\`linux\`?[(0,${pathVar}.join)(__codexHomeDir,\`.config\`,\`BraveSoftware\`,\`Brave-Browser\`),(0,${pathVar}.join)(__codexHomeDir,\`.config\`,\`google-chrome\`),(0,${pathVar}.join)(__codexHomeDir,\`.config\`,\`google-chrome-beta\`),(0,${pathVar}.join)(__codexHomeDir,\`.config\`,\`google-chrome-unstable\`),(0,${pathVar}.join)(__codexHomeDir,\`.config\`,\`chromium\`)]:[]}function codexLinuxChromeHasExtension({extensionId:__codexExtensionId,homeDir:__codexHomeDir,platform:__codexPlatform}){if(__codexPlatform!==\`linux\`)return!1;let __codexValidatedExtensionId=${extensionIdValidatorName}(__codexExtensionId);for(let __codexProfileRoot of codexLinuxChromeProfileRoots({homeDir:__codexHomeDir,platform:__codexPlatform})){if(!(0,${fsVar}.existsSync)(__codexProfileRoot))continue;for(let __codexProfileEntry of (0,${fsVar}.readdirSync)(__codexProfileRoot,{withFileTypes:!0}))if(__codexProfileEntry.isDirectory()&&(0,${fsVar}.existsSync)((0,${pathVar}.join)(__codexProfileRoot,__codexProfileEntry.name,\`Extensions\`,__codexValidatedExtensionId)))return!0}return!1}function codexLinuxChromeCommand(){let __codexPathEntries=(process.env.PATH??\`\`).split(\`:\`);for(let __codexBrowserCommand of[\`brave-browser\`,\`brave\`,\`google-chrome\`,\`google-chrome-stable\`,\`chromium-browser\`,\`chromium\`])for(let __codexPathEntry of __codexPathEntries){if(__codexPathEntry.length===0)continue;let __codexCandidate=(0,${pathVar}.join)(__codexPathEntry,__codexBrowserCommand);try{if((0,${fsVar}.existsSync)(__codexCandidate)&&(0,${fsVar}.statSync)(__codexCandidate).isFile())return __codexCandidate}catch{}}return null}function ${statusFunctionName}({extensionId:__codexExtensionId,homeDir:__codexHomeDir=(0,${osVar}.homedir)(),localAppDataDir:__codexLocalAppDataDir=process.env.LOCALAPPDATA,platform:__codexPlatform=process.platform}){if(__codexPlatform===\`linux\`)return codexLinuxChromeHasExtension({extensionId:__codexExtensionId,homeDir:__codexHomeDir,platform:__codexPlatform});let __codexValidatedExtensionId=${extensionIdValidatorName}(__codexExtensionId),__codexProfileDir=${profileDirFunctionName}({homeDir:__codexHomeDir,localAppDataDir:__codexLocalAppDataDir,platform:__codexPlatform});return __codexProfileDir==null||!(0,${fsVar}.existsSync)(__codexProfileDir)?!1:(0,${fsVar}.readdirSync)(__codexProfileDir,{withFileTypes:!0}).some(__codexProfileEntry=>__codexProfileEntry.isDirectory()&&(0,${fsVar}.existsSync)((0,${pathVar}.join)(__codexProfileDir,__codexProfileEntry.name,\`Extensions\`,__codexValidatedExtensionId)))}async function ${openFunctionName}({extensionId:__codexExtensionId,platform:__codexPlatform=process.platform,detectChromeCommand:__codexDetectChromeCommand=${detectChromeFunctionName},runCommand:__codexRunCommand=${runCommandFunctionName}}){if(__codexPlatform===\`darwin\`){await __codexRunCommand(${macOpenFunctionName},[\`-b\`,${macBundleIdName},${extensionUrlFunctionName}(__codexExtensionId)]);return}if(__codexPlatform===\`win32\`){let __codexChromeCommand=__codexDetectChromeCommand();if(__codexChromeCommand==null)throw Error(\`Google Chrome is not installed\`);await __codexRunCommand(__codexChromeCommand,[${extensionUrlFunctionName}(__codexExtensionId)]);return}if(__codexPlatform===\`linux\`){let __codexChromeCommand=codexLinuxChromeCommand()??__codexDetectChromeCommand();if(__codexChromeCommand==null)throw Error(\`Google Chrome, Brave, or Chromium is not installed\`);await __codexRunCommand(__codexChromeCommand,[${extensionUrlFunctionName}(__codexExtensionId)]);return}throw Error(\`Opening Chrome extension settings is only supported on macOS, Windows, and Linux\`)}`;
 
   return currentSource.slice(0, blockStart) + replacement + currentSource.slice(blockEnd);
 }

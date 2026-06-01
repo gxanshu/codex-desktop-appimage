@@ -29,6 +29,8 @@ The current working flow is:
   Workspace root. Members: `computer-use-linux`, `updater`.
 - `flake.nix` / `flake.lock`
   Nix flake that pins upstream DMG hash, Cargo deps hash, and Node deps hash so `nix build` can reproduce the install end-to-end. `scripts/ci/update-nix-hashes.sh` is the maintained way to refresh the pinned hashes.
+- `.devcontainer/devcontainer.json` / `.devcontainer/Dockerfile`
+  Use this container for Rust and patcher validation before suggesting host Rust/toolchain installs. It intentionally stays a generic repo build/test container (`rust:1-bookworm`, Node 22/npm, packaging tools, `rustfmt`, `clippy`).
 
 ### Launcher
 

@@ -87,7 +87,7 @@ Linux Computer Use is an **opt-in** plugin that lets Codex inspect and control d
 - app listing and accessibility trees via AT-SPI
 - screenshots through GNOME Shell DBus or XDG Desktop Portal
 - window listing and focusing on GNOME, KWin/Plasma, Hyprland, and i3
-- keyboard, text, click, scroll, and drag input through a uinput absolute pointer, the XDG Desktop Portal RemoteDesktop session, or `ydotool`
+- keyboard, text, click, scroll, and drag input through `ydotool`
 
 ### Runtime dependencies
 
@@ -107,7 +107,7 @@ sudo pacman -S ydotool
 sudo zypper install ydotool
 ```
 
-The preferred coordinate input path opens `/dev/uinput` directly. The XDG RemoteDesktop portal can also provide input on desktops that expose it. `ydotool` remains the fallback path; when you need it, run `ydotoold`, add your user to the `input` group, then re-login:
+`ydotool` needs `/dev/uinput` access. The usual setup is to run `ydotoold`, add your user to the `input` group, then re-login:
 
 ```bash
 sudo systemctl enable --now ydotoold
@@ -123,7 +123,7 @@ If you are on Fedora + KDE Plasma and the system unit path is awkward, a user-se
 - old system-level overrides are removed if they force the wrong socket path
 - `codex-computer-use-linux doctor` reports `can_send_development_input: true`
 
-A working XDG Desktop Portal implementation is needed if you are not on GNOME — `xdg-desktop-portal-kde` for KDE Plasma, `xdg-desktop-portal-wlr` for sway, `xdg-desktop-portal-hyprland` for Hyprland, or your distro's preferred portal backend for i3. GNOME ships a working portal by default.
+A working XDG Desktop Portal implementation is needed if you are not on GNOME — `xdg-desktop-portal-kde` for KDE Plasma, `xdg-desktop-portal-wlr` for sway / Hyprland, or your distro's preferred portal backend for i3. GNOME ships a working portal by default.
 
 ### Verifying readiness
 
@@ -202,10 +202,10 @@ Install dependencies manually per distro:
 sudo apt install python3 p7zip-full curl unzip build-essential
 
 # Fedora 41+
-sudo dnf install python3 7zip curl unzip rpm-build @development-tools
+sudo dnf install python3 7zip curl unzip @development-tools
 
 # Fedora < 41
-sudo dnf install python3 p7zip p7zip-plugins curl unzip rpm-build
+sudo dnf install python3 p7zip p7zip-plugins curl unzip
 sudo dnf groupinstall 'Development Tools'
 
 # openSUSE
@@ -297,7 +297,7 @@ make clean-dist
 | Sandbox errors | The launcher already sets `--no-sandbox` |
 | Stale install / cached DMG | `make build-app-fresh` removes the existing install dir and cached DMG, then re-downloads |
 | Computer Use plugin invisible in UI | Ensure you enabled the Computer Use UI. If it is enabled and still hidden, the OpenAI per-account rollout may not be available |
-| Computer Use `doctor` reports no input backend | Grant read/write `/dev/uinput`, enable the XDG RemoteDesktop portal, or start the distro-provided `ydotoold` / `ydotool` daemon with a socket accessible to your user |
+| Computer Use `doctor` reports `ydotool not running` | Start the distro-provided daemon unit (`ydotoold` or `ydotool`), or use a user-session `ydotoold` service, then add your user to the `input` group |
 | Computer Use `doctor` reports `ydotool_socket: Permission denied` | The daemon socket is root-only. Adjust the `ydotoold` service so `/tmp/.ydotool_socket` becomes `root:input` with `0660` permissions |
 | `ConnectTimeoutError` for `www.electronjs.org` during `@electron/rebuild` | Re-run `make build-app`; the installer now uses `https://artifacts.electronjs.org/headers/dist` for Electron headers by default |
 | Computer Use AT-SPI tree empty | Run `codex-computer-use-linux setup` to flip GNOME accessibility on, then restart the target app |
