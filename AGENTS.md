@@ -29,6 +29,8 @@ The current working flow is:
   Workspace root. Members: `computer-use-linux`, `updater`.
 - `flake.nix` / `flake.lock`
   Nix flake that pins upstream DMG hash, Cargo deps hash, and Node deps hash so `nix build` can reproduce the install end-to-end. `scripts/ci/update-nix-hashes.sh` is the maintained way to refresh the pinned hashes.
+- `.devcontainer/devcontainer.json` / `.devcontainer/Dockerfile`
+  Use this container for Rust and patcher validation before suggesting host Rust/toolchain installs. It intentionally stays a generic repo build/test container (`rust:1-bookworm`, Node 22/npm, packaging tools, `rustfmt`, `clippy`).
 
 ### Launcher
 
@@ -251,7 +253,7 @@ This path is for users who do not want a system-wide native package; the daily-d
 ## Crate Versioning
 
 - Current updater crate version: `0.7.1` (`updater/Cargo.toml`).
-- Current `codex-computer-use-linux` crate version: `0.1.2-linux-alpha1` (`computer-use-linux/Cargo.toml`).
+- Current `codex-computer-use-linux` crate version: `0.2.3-linux-alpha1` (`computer-use-linux/Cargo.toml`). The enumeration tracks the standalone `agent-sh/computer-use-linux` crate (currently `0.2.3`); a mismatch means a sync between the two is pending.
 - Bump `patch` for fixes, docs, and maintenance-only updates.
 - Bump `minor` for compatible feature additions.
 - Bump `major` for incompatible CLI, persisted-state, or install-flow changes.

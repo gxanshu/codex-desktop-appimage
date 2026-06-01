@@ -35,6 +35,11 @@ What it changes:
   Linux JavaScript ECDSA P-256 key provider.
 - Lets the remote-control Connections UI render on Linux when upstream marks
   the feature unavailable or withholds the remote-control visibility rollout.
+- Refreshes the remote Connections settings state every 5 seconds and
+  immediately after focus, visibility, online, or resume signals.
+- Keeps Chrome Browser Use available to remote/mobile controlled sessions when
+  the local Chrome plugin and native host are healthy, and adds a diagnostic
+  when the native browser bridge is not exposed to the session.
 - Persists the private key material at
   `~/.config/codex-desktop/remote-control-device-keys-v1.json` with `0600`
   file permissions.
@@ -43,6 +48,78 @@ What it changes:
   startup.
 - Updates remote-control settings and Codex mobile setup copy so the Linux flow
   is not described as Mac-only.
+- Stages `.codex-linux/cold-start.d/remote-mobile-control`, a feature-owned
+  cold-start hook that provisions the upstream managed standalone daemon runtime
+  when it is missing, then starts the managed app-server daemon with
+  `remote-control start`.
+
+Remote mobile daemon requirement:
+
+The interactive Codex CLI and the remote-control daemon are separate concerns.
+You can keep using a Homebrew-installed `codex` for normal terminal and Desktop
+app-server usage, but Android remote control currently expects the upstream
+managed standalone daemon runtime at:
+
+```bash
+~/.codex/packages/standalone/current/codex
+```
+
+If that binary is missing, the feature's cold-start hook runs the upstream
+standalone installer with `CODEX_INSTALL_DIR` pointed at a private bin directory
+under `~/.codex/packages/standalone/.bin`. That satisfies the managed daemon
+layout without changing `CODEX_CLI_PATH`, creating `~/.local/bin/codex`, or
+adding PATH blocks to your shell profile.
+
+The hook is launched best-effort in the background by the generic launcher hook
+runner. When the system `timeout` command is available, the installer/start path
+is capped by
+`CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_TIMEOUT_SECONDS` (default `30`), so
+Desktop cold start is not blocked by network, GitHub, or installer stalls.
+When `timeout` is unavailable, the hook continues the installer/start path in a
+background subprocess. Hook output is written to the launcher log.
+
+On NixOS, prefer the flake's Home Manager module instead of the launcher hook:
+
+```nix
+{
+  imports = [
+    inputs.codex-desktop-linux.homeManagerModules.default
+  ];
+
+  programs.codexDesktopLinux = {
+    enable = true;
+    computerUseUi.enable = true;
+    remoteMobileControl.enable = true;
+    remoteControl.enable = true;
+  };
+}
+```
+
+The module installs the remote-mobile package variant and manages
+`codex-remote-control.service` as a user systemd unit running
+`codex app-server --remote-control --listen unix://`. It also sets
+`CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED=1` so the launcher does not
+start a second mutable standalone daemon.
+
+This is compatible with immutable Linux systems such as Bluefin / Universal
+Blue because the managed daemon runtime is user-scoped state under
+`~/.codex/packages/standalone`. It does not require `dnf`, `rpm-ostree`, host
+package layering, or base-OS mutation. The private `.bin` directory is only a
+launcher-owned target for the installer symlink; it is not prepended to the
+user's persistent shell `PATH`.
+
+Set `CODEX_REMOTE_CONTROL_RUNTIME_AUTO_INSTALL_DISABLED=1` to disable that
+runtime provisioning and only use an already-installed standalone runtime.
+
+To force a specific daemon binary without affecting the interactive CLI, set:
+
+```bash
+CODEX_REMOTE_CONTROL_CODEX_PATH=/path/to/standalone/codex
+```
+
+To keep Desktop using Homebrew while the daemon uses standalone, set
+`CODEX_CLI_PATH` to the Brew binary and leave
+`CODEX_REMOTE_CONTROL_CODEX_PATH` unset or pointed at the standalone binary.
 
 KDE Plasma smoke check:
 

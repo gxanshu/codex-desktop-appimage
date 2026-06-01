@@ -5,13 +5,76 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- The `make setup-native` Linux feature picker can now present a GUI checklist
+  (zenity or kdialog) instead of the terminal-only numbered prompt, pre-checked
+  with the currently-enabled features. It falls back to the terminal picker when
+  no dialog tool or display is available (headless/SSH/CI) or when
+  `CODEX_BOOTSTRAP_NO_GUI=1` is set. The existing Python discovery/validation/
+  write path is reused unchanged.
+- An "Install updates when you close Codex" toggle in the Keybinds settings page
+  (new "Updates" section). When on (the default, matching prior behavior), a
+  ready update waits for Codex to close and then installs; when off, updates
+  wait until you explicitly click Update. The toggle persists to
+  `~/.config/<appId>/settings.json` as `codex-linux-auto-update-on-exit`, and
+  `codex-update-manager` rereads it during reconciliation as an overlay over
+  `config.toml` so the in-app preference wins without restarting the service.
+- `codex-update-manager` can now track newer *wrapper* releases (this repo's own
+  Linux features and fixes) in addition to the upstream Codex DMG. Opt in with
+  `enable_wrapper_updates = true` in `config.toml`; a new `check-wrapper`
+  subcommand and the `status --json` output report the detected wrapper commit
+  and a changelog of what changed. Detection is git-based, requires the remote
+  candidate to descend from the installed checkout, clears stale candidates
+  when no update is currently valid, uses timeout-bound non-interactive git
+  commands, prefers curated `CHANGELOG.md` sections newer than the installed
+  version, and falls back to git commit subjects. Packaged frozen bundles
+  without a git checkout degrade gracefully (no wrapper tracking; updates arrive
+  via a normal package upgrade).
+- The opt-in `codex-wrapper-updater` update action can ask which optional Linux
+  features to enable before rebuilding. The picker reads the recorded candidate
+  wrapper source, preserves unknown/private feature ids from the existing
+  config, saves selections to `~/.config/<appId>/linux-features.json`, and
+  skips without blocking the update when there is no display, no dialog tool, a
+  dialog launch failure, or a cancellation.
+- The opt-in `codex-wrapper-updater` toolbar now shows the installed short
+  wrapper commit as a SHA chip when build metadata is available, and shows a
+  disabled "dev mode" action when the installed commit is ahead of the tracked
+  remote.
+- Launcher rendering mode `CODEX_LINUX_RENDERING_MODE=wayland-gpu`, which
+  forces native Wayland with GPU compositing enabled and skips forced renderer
+  accessibility by default for Wayland desktops where XWayland or software
+  rendering is unstable.
+- New opt-in Linux feature `read-aloud-mcp` that stages a standalone Rust Read
+  Aloud MCP plugin with `doctor`, `read_aloud`, and `stop` tools. The MCP server
+  reuses the Kokoro runner/model configuration from the Read Aloud UI feature
+  and stays out of the default install unless enabled in
+  `linux-features/features.json`. When bundled, the feature patches Codex's
+  bundled plugin registry so the app keeps `read-aloud` installed, and the
+  launcher syncs the plugin cache so new Codex windows expose the MCP tools
+  through the same auto-install path as Computer Use.
+
 ### Fixed
 
+- The wrapper updater no longer offers a "downgrade as update" when the
+  installed build is ahead of the tracked remote. Detection records dev mode
+  when the candidate does not descend from the installed commit, clears stale
+  wrapper candidates when detection is not valid, and the apply path refuses to
+  run while dev mode is recorded.
+- Nix builds now rewrite crates.io API crate download URLs to the static
+  crates.io CDN path, avoiding PR-only CI failures from crates.io API 403s
+  while preserving the same lockfile checksums.
+- Bundled Browser plugin staging now preserves local `file://` target support
+  advertised by the Browser plugin while keeping remote file hosts and `data:`
+  URLs blocked by the URL policy.
+- `codex-update-manager` now prunes unreferenced updater workspaces under `~/.cache/codex-update-manager/workspaces`, removing heavy build artifacts (`builder/`, `codex-app/`, `dist/`) while preserving lightweight diagnostics such as `logs/` and rebuild reports.
 - The Chrome native-messaging host now evicts stale browser clients when a newer Codex browser client connects, preventing old Node REPL sessions from repeatedly reattaching CDP and driving extension service-worker CPU.
 - The bundled Chrome plugin is now auto-installed during app startup, matching Browser Use, so the plugin page no longer falls back to an install button after restart when the Linux native host is already staged.
 - Nix builds, installer apps, and dev shells now use modern `7zz`, and the installer dependency check accepts `7zz` without requiring a separate legacy `7z` binary.
 - Codex Desktop no longer removes user-enabled `remote_control = true` from the local Linux config before starting the app server.
 - Linux webview bundles no longer ask current Codex CLI app servers to enable unsupported feature flags, avoiding connector authentication sync errors.
+- Native Linux launches now keep GPU compositing enabled by default, avoiding sustained Electron GPU-process CPU usage on some X11/NVIDIA desktops. Users who still need the old flicker workaround can opt in with `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1`.
+- Linux Keybinds settings now show current upstream shortcut defaults for Quick Chat, alternate New Chat, search, terminal, browser, and thread actions, and no longer lists non-dispatchable runtime rows.
 
 ## [0.8.0] - 2026-05-16
 
