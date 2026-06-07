@@ -168,6 +168,60 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/resources/node-runtime/bin/node"
 }
 
+test_deb_builder_rebuilds_deleted_updater_source() {
+    info "Checking package builder recovers from deleted updater binary source"
+    local workspace="$TMP_DIR/deb-deleted-updater-source"
+    local bin_dir="$workspace/bin"
+    local app_dir="$workspace/app"
+    local dist_dir="$workspace/dist"
+    local pkg_root="$workspace/deb-root"
+    local cargo_target_dir="$workspace/cargo-target"
+
+    mkdir -p "$workspace" "$dist_dir"
+    make_stub_bin_dir "$bin_dir"
+    make_fake_app "$app_dir"
+
+    cat > "$bin_dir/dpkg" <<'SCRIPT'
+#!/usr/bin/env bash
+if [ "$1" = "--print-architecture" ]; then
+    echo amd64
+    exit 0
+fi
+exit 0
+SCRIPT
+    cat > "$bin_dir/dpkg-deb" <<'SCRIPT'
+#!/usr/bin/env bash
+output="${@: -1}"
+mkdir -p "$(dirname "$output")"
+touch "$output"
+SCRIPT
+    cat > "$bin_dir/cargo" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+target_dir="${CARGO_TARGET_DIR:-target}"
+mkdir -p "$target_dir/release"
+cat > "$target_dir/release/codex-update-manager" <<'BIN'
+#!/usr/bin/env bash
+echo rebuilt updater
+BIN
+chmod +x "$target_dir/release/codex-update-manager"
+SCRIPT
+    chmod +x "$bin_dir/dpkg" "$bin_dir/dpkg-deb" "$bin_dir/cargo"
+
+    PATH="$bin_dir:$PATH" \
+    APP_DIR_OVERRIDE="$app_dir" \
+    PKG_ROOT_OVERRIDE="$pkg_root" \
+    DIST_DIR_OVERRIDE="$dist_dir" \
+    CARGO_TARGET_DIR="$cargo_target_dir" \
+    UPDATER_BINARY_SOURCE="$workspace/codex-update-manager (deleted)" \
+    PACKAGE_VERSION="2026.03.24.120000+rebuilt" \
+    bash "$REPO_DIR/scripts/build-deb.sh"
+
+    assert_file_exists "$dist_dir/codex-desktop_2026.03.24.120000+rebuilt_amd64.deb"
+    assert_file_exists "$pkg_root/usr/bin/codex-update-manager"
+    assert_contains "$pkg_root/usr/bin/codex-update-manager" "rebuilt updater"
+}
+
 test_update_builder_preserves_enabled_linux_features_config() {
     info "Checking update-builder preserves sanitized enabled Linux feature config"
     local workspace="$TMP_DIR/update-builder-linux-features"
@@ -730,6 +784,290 @@ SCRIPT
     [ "$first_line" = "2" ] || fail "Expected make build-app-fresh to pass --fresh plus the default argument slot, got: $(cat "$install_log")"
     [ "$second_line" = "--fresh" ] || fail "Expected make build-app-fresh to pass --fresh first, got: $(cat "$install_log")"
     [ -z "$third_line" ] || fail "Expected make build-app-fresh default DMG argument to be empty, got: $(cat "$install_log")"
+}
+
+test_installer_refreshes_stale_cached_dmg_metadata() {
+    info "Checking installer DMG cache freshness metadata branches"
+    local workspace="$TMP_DIR/dmg-cache-refresh"
+    local bin_dir="$workspace/bin"
+    local url="https://persistent.oaistatic.com/codex-app-prod/Codex.dmg"
+    local url_sha256
+
+    url_sha256="$(printf '%s' "$url" | sha256sum | awk '{print $1}')"
+
+    mkdir -p "$bin_dir"
+
+    cat >"$bin_dir/curl" <<'SCRIPT'
+#!/usr/bin/env bash
+set -eu
+
+is_head=0
+for arg in "$@"; do
+    if [ "$arg" = "-fsSLI" ]; then
+        is_head=1
+    fi
+done
+
+if [ "$is_head" -eq 1 ]; then
+    printf '%s\n' "HEAD" >> "$TEST_CURL_LOG"
+    if [ "${TEST_HEAD_FAIL:-0}" = "1" ]; then
+        exit 22
+    fi
+    printf 'HTTP/2 200\r\n'
+    [ -z "${TEST_ETAG:-}" ] || printf 'ETag: %s\r\n' "$TEST_ETAG"
+    [ -z "${TEST_LAST_MODIFIED:-}" ] || printf 'Last-Modified: %s\r\n' "$TEST_LAST_MODIFIED"
+    [ -z "${TEST_CONTENT_LENGTH:-}" ] || printf 'Content-Length: %s\r\n' "$TEST_CONTENT_LENGTH"
+    printf '\r\n'
+    exit 0
+fi
+
+printf '%s\n' "GET" >> "$TEST_CURL_LOG"
+if [ "${TEST_GET_FAIL:-0}" = "1" ]; then
+    exit 23
+fi
+
+out=""
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = "-o" ]; then
+        shift
+        out="$1"
+    fi
+    shift || true
+done
+
+[ -n "$out" ] || exit 2
+printf '%s' "${TEST_DOWNLOAD_CONTENT:-new}" >"$out"
+SCRIPT
+    chmod +x "$bin_dir/curl"
+
+    run_dmg_cache_case() {
+        local source_dir="$1"
+        local output_log="$2"
+        shift 2
+
+        mkdir -p "$source_dir"
+        : >"$source_dir/curl.log"
+        env "$@" \
+            PATH="$bin_dir:$PATH" \
+            TEST_SOURCE_DIR="$source_dir" \
+            TEST_CURL_LOG="$source_dir/curl.log" \
+            REPO_DIR="$REPO_DIR" \
+            bash <<'SCRIPT' >"$output_log" 2>&1
+set -Eeuo pipefail
+
+SCRIPT_DIR="$TEST_SOURCE_DIR"
+WORK_DIR="$(mktemp -d)"
+# shellcheck disable=SC1091
+source "$REPO_DIR/scripts/lib/install-helpers.sh"
+# shellcheck disable=SC1091
+source "$REPO_DIR/scripts/lib/dmg.sh"
+
+dmg_path="$(get_dmg)"
+[ "$dmg_path" = "$TEST_SOURCE_DIR/Codex.dmg" ]
+SCRIPT
+    }
+
+    local no_metadata="$workspace/no-metadata"
+    mkdir -p "$no_metadata"
+    printf '%s' "old" >"$no_metadata/Codex.dmg"
+    run_dmg_cache_case "$no_metadata" "$no_metadata/output.log" \
+        TEST_ETAG=fresh-etag \
+        TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
+        TEST_CONTENT_LENGTH=3 \
+        TEST_DOWNLOAD_CONTENT=new
+    [ "$(cat "$no_metadata/Codex.dmg")" = "new" ] || fail "Expected missing-metadata cache to refresh"
+    assert_contains "$no_metadata/Codex.dmg.metadata" "etag=fresh-etag"
+    assert_contains "$no_metadata/Codex.dmg.metadata" "url_sha256=$url_sha256"
+    assert_contains "$no_metadata/output.log" "Cached DMG has no upstream metadata"
+    assert_contains "$no_metadata/output.log" "Refreshing stale cached DMG"
+
+    local matching="$workspace/matching"
+    mkdir -p "$matching"
+    printf '%s' "old" >"$matching/Codex.dmg"
+    cat >"$matching/Codex.dmg.metadata" <<EOF
+url_sha256=$url_sha256
+etag=same-etag
+last_modified=Thu, 04 Jun 2026 00:00:00 GMT
+content_length=3
+EOF
+    run_dmg_cache_case "$matching" "$matching/output.log" \
+        TEST_ETAG=same-etag \
+        TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
+        TEST_CONTENT_LENGTH=3 \
+        TEST_DOWNLOAD_CONTENT=downloaded
+    [ "$(cat "$matching/Codex.dmg")" = "old" ] || fail "Expected matching metadata to reuse cache"
+    assert_not_contains "$matching/curl.log" "GET"
+    assert_contains "$matching/output.log" "Using cached DMG"
+
+    local differing="$workspace/differing"
+    mkdir -p "$differing"
+    printf '%s' "old" >"$differing/Codex.dmg"
+    cat >"$differing/Codex.dmg.metadata" <<EOF
+url_sha256=$url_sha256
+etag=old-etag
+last_modified=Thu, 04 Jun 2026 00:00:00 GMT
+content_length=3
+EOF
+    run_dmg_cache_case "$differing" "$differing/output.log" \
+        TEST_ETAG=fresh-etag \
+        TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
+        TEST_CONTENT_LENGTH=3 \
+        TEST_DOWNLOAD_CONTENT=new
+    [ "$(cat "$differing/Codex.dmg")" = "new" ] || fail "Expected differing metadata to refresh cache"
+    assert_contains "$differing/curl.log" "GET"
+
+    local failed_get="$workspace/failed-get"
+    mkdir -p "$failed_get"
+    printf '%s' "old" >"$failed_get/Codex.dmg"
+    cat >"$failed_get/Codex.dmg.metadata" <<EOF
+url_sha256=$url_sha256
+etag=old-etag
+last_modified=Thu, 04 Jun 2026 00:00:00 GMT
+content_length=3
+EOF
+    if run_dmg_cache_case "$failed_get" "$failed_get/output.log" \
+        TEST_ETAG=fresh-etag \
+        TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
+        TEST_CONTENT_LENGTH=3 \
+        TEST_GET_FAIL=1
+    then
+        fail "Expected failed replacement download to fail the refresh"
+    fi
+    [ "$(cat "$failed_get/Codex.dmg")" = "old" ] || fail "Expected failed refresh to preserve old DMG"
+    assert_contains "$failed_get/Codex.dmg.metadata" "etag=old-etag"
+    assert_file_not_exists "$failed_get/Codex.dmg.part"
+
+    local head_failure="$workspace/head-failure"
+    mkdir -p "$head_failure"
+    printf '%s' "old" >"$head_failure/Codex.dmg"
+    cat >"$head_failure/Codex.dmg.metadata" <<EOF
+url_sha256=$url_sha256
+etag=old-etag
+last_modified=Thu, 04 Jun 2026 00:00:00 GMT
+content_length=3
+EOF
+    run_dmg_cache_case "$head_failure" "$head_failure/output.log" TEST_HEAD_FAIL=1
+    [ "$(cat "$head_failure/Codex.dmg")" = "old" ] || fail "Expected HEAD failure to preserve cache"
+    assert_not_contains "$head_failure/curl.log" "GET"
+    assert_contains "$head_failure/output.log" "Could not check upstream DMG metadata"
+
+    local head_failure_mismatched_url="$workspace/head-failure-mismatched-url"
+    mkdir -p "$head_failure_mismatched_url"
+    printf '%s' "old" >"$head_failure_mismatched_url/Codex.dmg"
+    cat >"$head_failure_mismatched_url/Codex.dmg.metadata" <<EOF
+url_sha256=$url_sha256
+etag=old-etag
+last_modified=Thu, 04 Jun 2026 00:00:00 GMT
+content_length=3
+EOF
+    if run_dmg_cache_case "$head_failure_mismatched_url" "$head_failure_mismatched_url/output.log" \
+        CODEX_UPSTREAM_DMG_URL="https://example.com/Codex.dmg" \
+        TEST_HEAD_FAIL=1 \
+        TEST_GET_FAIL=1
+    then
+        fail "Expected HEAD failure with mismatched cached URL metadata to attempt refresh and fail"
+    fi
+    [ "$(cat "$head_failure_mismatched_url/Codex.dmg")" = "old" ] || fail "Expected failed mismatched-URL refresh to preserve old DMG"
+    assert_contains "$head_failure_mismatched_url/Codex.dmg.metadata" "etag=old-etag"
+    assert_contains "$head_failure_mismatched_url/curl.log" "GET"
+    assert_contains "$head_failure_mismatched_url/output.log" "cached DMG URL metadata does not match current URL"
+
+    local secret_url="$workspace/secret-url"
+    mkdir -p "$secret_url"
+    run_dmg_cache_case "$secret_url" "$secret_url/output.log" \
+        CODEX_UPSTREAM_DMG_URL="https://user:secret@example.com/Codex.dmg?token=topsecret#fragsecret" \
+        TEST_ETAG=opaque-etag \
+        TEST_CONTENT_LENGTH=3 \
+        TEST_DOWNLOAD_CONTENT=new
+    [ "$(cat "$secret_url/Codex.dmg")" = "new" ] || fail "Expected HTTPS override URL to download"
+    assert_contains "$secret_url/output.log" "URL: https://redacted@example.com/Codex.dmg?REDACTED"
+    assert_not_contains "$secret_url/output.log" "topsecret"
+    assert_not_contains "$secret_url/output.log" "fragsecret"
+    assert_not_contains "$secret_url/Codex.dmg.metadata" "topsecret"
+    assert_not_contains "$secret_url/Codex.dmg.metadata" "fragsecret"
+
+    local invalid_url="$workspace/invalid-url"
+    mkdir -p "$invalid_url"
+    if run_dmg_cache_case "$invalid_url" "$invalid_url/output.log" \
+        CODEX_UPSTREAM_DMG_URL="file:///tmp/Codex.dmg"
+    then
+        fail "Expected non-HTTPS upstream DMG URL to fail"
+    fi
+    assert_contains "$invalid_url/output.log" "Upstream DMG URL must be an HTTPS URL"
+}
+
+test_fresh_install_removes_cached_dmg_metadata() {
+    info "Checking --fresh removes cached DMG metadata"
+    local workspace="$TMP_DIR/fresh-dmg-metadata"
+    local source_dir="$workspace/source"
+
+    mkdir -p "$source_dir"
+    printf '%s' "metadata" >"$source_dir/Codex.dmg.metadata"
+
+    TEST_SOURCE_DIR="$source_dir" REPO_DIR="$REPO_DIR" bash <<'SCRIPT'
+set -Eeuo pipefail
+
+SCRIPT_DIR="$TEST_SOURCE_DIR"
+WORK_DIR="$(mktemp -d)"
+INSTALL_DIR="$TEST_SOURCE_DIR/codex-app"
+# shellcheck disable=SC1091
+source "$REPO_DIR/scripts/lib/install-helpers.sh"
+
+FRESH_INSTALL=1
+REUSE_CACHED_DMG=0
+prepare_install
+SCRIPT
+
+    assert_file_not_exists "$source_dir/Codex.dmg"
+    assert_file_not_exists "$source_dir/Codex.dmg.metadata"
+}
+
+test_rebuild_candidate_uses_validated_default_dmg() {
+    info "Checking rebuild-candidate default DMG validation flow"
+    local workspace="$TMP_DIR/rebuild-candidate-dmg"
+    local repo="$workspace/repo"
+    local explicit_dmg="$workspace/explicit.dmg"
+    local explicit_realpath
+    local first_line
+    local second_line
+
+    mkdir -p "$repo/scripts"
+    cp "$REPO_DIR/scripts/rebuild-candidate.sh" "$repo/scripts/rebuild-candidate.sh"
+    printf '%s' "cached" >"$repo/Codex.dmg"
+    printf '%s' "explicit" >"$explicit_dmg"
+    explicit_realpath="$(realpath "$explicit_dmg")"
+
+    cat >"$repo/install.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+set -eu
+{
+    printf 'CALL:'
+    for arg in "$@"; do
+        printf '<%s>' "$arg"
+    done
+    printf '\n'
+} >> "$TEST_REBUILD_LOG"
+SCRIPT
+    chmod +x "$repo/install.sh"
+
+    TEST_REBUILD_LOG="$workspace/default.log" \
+    CODEX_NEXT_APP_DIR="$workspace/next" \
+    REBUILD_REPORT_DIR="$workspace/report" \
+        bash "$repo/scripts/rebuild-candidate.sh" >"$workspace/default.out" 2>&1
+    first_line="$(sed -n '1p' "$workspace/default.log")"
+    second_line="$(sed -n '2p' "$workspace/default.log")"
+    [[ "$first_line" != *"Codex.dmg"* ]] || fail "Default inspect should let installer validate the cache: $first_line"
+    [[ "$second_line" == *"<$repo/Codex.dmg>"* ]] || fail "Default build should pin the validated cache: $second_line"
+    assert_contains "$workspace/default.out" "Using validated DMG for build"
+
+    TEST_REBUILD_LOG="$workspace/explicit.log" \
+    CODEX_NEXT_APP_DIR="$workspace/next-explicit" \
+    REBUILD_REPORT_DIR="$workspace/report-explicit" \
+        bash "$repo/scripts/rebuild-candidate.sh" "$explicit_dmg" >"$workspace/explicit.out" 2>&1
+    first_line="$(sed -n '1p' "$workspace/explicit.log")"
+    second_line="$(sed -n '2p' "$workspace/explicit.log")"
+    [[ "$first_line" == *"<$explicit_realpath>"* ]] || fail "Explicit inspect should receive explicit DMG: $first_line"
+    [[ "$second_line" == *"<$explicit_realpath>"* ]] || fail "Explicit build should receive explicit DMG: $second_line"
 }
 
 test_native_shortcut_targets_compose_existing_flows() {
@@ -1812,6 +2150,27 @@ JS
     assert_contains "$browser_client" "codexLinuxChromeUserDataDirectories"
     assert_contains "$browser_client" '"BraveSoftware","Brave-Browser"'
     assert_contains "$browser_client" '".config","chromium"'
+
+    cat > "$browser_client" <<'JS'
+import{resolve as Y5}from"path";import{homedir as Z5,platform as X5}from"os";var hl=Y5(Z5(),X5()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome");import{ClassicLevel as Q5}from"./node_modules/classic-level.mjs";import{resolve as rh}from"path";import{tmpdir as o9}from"os";import{cp as t9,mkdtemp as r9,rm as fT}from"fs/promises";import{existsSync as n9}from"fs";var mT=async(e,t)=>{let r=rh(hl,e,"Local Extension Settings",t);if(!n9(r))return null;let n=await r9(rh(o9(),"codex"));await t9(r,n,{recursive:!0}),await fT(rh(n,"LOCK"));let o=new Q5(n,{createIfMissing:!1,keyEncoding:"utf8",valueEncoding:"utf8"});try{await o.open();let i=await o.get("extensionInstanceId");if(!i)return null;let s=JSON.parse(i);return typeof s!="string"?null:s}finally{await o.close(),await fT(n,{force:!0,recursive:!0})}};var a9=async(e,t)=>(await u9(e)).find(o=>o.instanceId===t)||null,u9=async e=>{let t=await c9();return await Promise.all(t.map(async r=>({...r,instanceId:await mT(r.id,e).catch(n=>(ne(n),null))})))},c9=async()=>{let e=s9(hl,"Local State"),t=JSON.parse(await i9(e,"utf8"));return t.profile.profiles_order.map((r,n)=>{let o=t.profile.info_cache[r];return o?{id:r,name:o.name,isLastUsed:t.profile.last_used===r,orderingIndex:n,avatarUrl:o.avatar_icon}:null}).filter(r=>!!r)}
+JS
+    node "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$chrome_dir" >/dev/null 2>&1
+    assert_contains "$browser_client" "codexLinuxChromeUserDataDirectories"
+    assert_contains "$browser_client" '"BraveSoftware","Brave-Browser"'
+    assert_contains "$browser_client" '".config","chromium"'
+    assert_contains "$browser_client" "async(e,t,r=hl)"
+    assert_contains "$browser_client" "instanceId:await mT(o.id,e,r)"
+
+    cat > "$browser_client" <<'JS'
+import{readFile as $j}from"fs/promises";import{resolve as zj}from"path";import{resolve as Nj}from"path";import{homedir as Oj,platform as Mj}from"os";var $c=Nj(Oj(),Mj()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome");import{ClassicLevel as Fj}from"./node_modules/classic-level.mjs";import{resolve as Ih}from"path";import{tmpdir as Bj}from"os";import{cp as Lj,mkdtemp as Uj,rm as gk}from"fs/promises";import{existsSync as jj}from"fs";var bk=async(e,t)=>{let r=Ih($c,e,"Local Extension Settings",t);if(!jj(r))return null;let n=await Uj(Ih(qj(),"codex"));await Lj(r,n,{recursive:!0}),await gk(Ih(n,"LOCK"));let o=new Fj(n,{createIfMissing:!1,keyEncoding:"utf8",valueEncoding:"utf8"});try{await o.open();let i=await o.get("extensionInstanceId");if(!i)return null;let s=JSON.parse(i);return typeof s!="string"?null:s}finally{await o.close(),await gk(n,{force:!0,recursive:!0})}},qj=()=>"nodeRepl"in globalThis&&globalThis.nodeRepl?globalThis.nodeRepl.tmpDir:Bj();var yk=async e=>{if(e.type!=="extension"||!e.metadata?.extensionInstanceId||!e.metadata.extensionId)return e;let t=await Wj(e.metadata.extensionId,e.metadata.extensionInstanceId);return t?{...e,metadata:{...e.metadata,profileName:t.name,profileIsLastUsed:t.isLastUsed.toString(),profileOrdering:t.orderingIndex.toString()}}:e},Wj=async(e,t)=>(await Hj(e)).find(o=>o.instanceId===t)||null,Hj=async e=>{let t=await Vj();return await Promise.all(t.map(async r=>({...r,instanceId:await bk(r.id,e).catch(n=>(ue(n),null))})))},Vj=async()=>{let e=zj($c,"Local State"),t=JSON.parse(await $j(e,"utf8"));return t.profile.profiles_order.map((r,n)=>{let o=t.profile.info_cache[r];return o?{id:r,name:o.name,isLastUsed:t.profile.last_used===r,orderingIndex:n,avatarUrl:o.avatar_icon}:null}).filter(r=>!!r)};var Ph=Iy(Gj.platform()),Kj=async(e,{codexSessionId:t})=>{let r=ap(Ey),n=e.filter(i=>i.info.type==="iab"),o=Jj(n,t,r);return await Promise.all(n.filter(i=>!o.includes(i)).map(async({api:i})=>i.close())),[...e.filter(i=>i.info.type!=="iab"),...o]},Jj=(e,t,r)=>t==null?[]:e.filter(n=>n.info.metadata?.codexSessionId===t&&(r==null||n.info.metadata.codexAppBuildFlavor===r));var vk=async e=>[];
+JS
+    node "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$chrome_dir" >/dev/null 2>&1
+    assert_contains "$browser_client" "codexLinuxChromeUserDataDirectories"
+    assert_contains "$browser_client" '"BraveSoftware","Brave-Browser"'
+    assert_contains "$browser_client" '".config","chromium"'
+    assert_contains "$browser_client" 'async(e,t,r=$c)'
+    assert_contains "$browser_client" "instanceId:await bk(o.id,e,r)"
+    assert_contains "$browser_client" "codexLinuxRankBrowserBackends"
 }
 
 test_chrome_marketplace_fallback_synthesis() {
@@ -3421,6 +3780,86 @@ test_user_local_install_preserves_persisted_x11_preference_on_refresh() {
     assert_contains "$preference_file" "CODEX_USER_LOCAL_OZONE_PLATFORM=auto"
 }
 
+test_user_local_prepare_build_repo_copies_enabled_local_features() {
+    info "Checking user-local managed checkout stages enabled local features"
+    local workspace="$TMP_DIR/user-local-local-features"
+    local origin_repo="$workspace/origin.git"
+    local source_repo="$workspace/source"
+    local managed_repo="$workspace/xdg-data/codex-desktop-linux/managed-repo"
+    local install_env="$workspace/install.env"
+    local feature_config="$workspace/linux-features.json"
+    local staged_local_feature="$managed_repo/linux-features/local/local-tool"
+
+    mkdir -p "$workspace"
+    git init --bare --initial-branch=main "$origin_repo" >/dev/null
+    git clone "$origin_repo" "$source_repo" >/dev/null 2>&1
+    git -C "$source_repo" config user.name "Smoke Test"
+    git -C "$source_repo" config user.email "smoke@example.com"
+
+    mkdir -p "$source_repo/linux-features/repo-feature"
+    printf '%s\n' '# Linux Features' > "$source_repo/linux-features/README.md"
+    printf '%s\n' '{"enabled":[]}' > "$source_repo/linux-features/features.example.json"
+    printf '%s\n' '{"id":"repo-feature","title":"Repo Feature"}' \
+        > "$source_repo/linux-features/repo-feature/feature.json"
+    printf '%s\n' '# Repo Feature' > "$source_repo/linux-features/repo-feature/README.md"
+    git -C "$source_repo" add linux-features
+    git -C "$source_repo" commit -m "base" >/dev/null
+    git -C "$source_repo" push -u origin main >/dev/null
+
+    mkdir -p "$source_repo/linux-features/local/local-tool/nested"
+    mkdir -p "$source_repo/linux-features/local/repo-feature"
+    printf '%s\n' '{"id":"local-tool","title":"Local Tool"}' \
+        > "$source_repo/linux-features/local/local-tool/feature.json"
+    printf '%s\n' '# Local Tool' > "$source_repo/linux-features/local/local-tool/README.md"
+    printf '%s\n' 'payload' > "$source_repo/linux-features/local/local-tool/nested/payload.txt"
+    ln -s nested/payload.txt "$source_repo/linux-features/local/local-tool/payload-link"
+    printf '%s\n' '{"id":"repo-feature","title":"Local Repo Feature"}' \
+        > "$source_repo/linux-features/local/repo-feature/feature.json"
+    cat > "$feature_config" <<'JSON'
+{
+  "enabled": [
+    "local-tool",
+    "repo-feature",
+    "missing-local",
+    "bad id"
+  ]
+}
+JSON
+
+    (
+        export HOME="$workspace/home"
+        export XDG_DATA_HOME="$workspace/xdg-data"
+        export XDG_STATE_HOME="$workspace/xdg-state"
+        export CODEX_LINUX_FEATURES_CONFIG="$feature_config"
+        mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
+
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh"
+
+        INSTALL_CONFIG_FILE="$install_env"
+        cat > "$INSTALL_CONFIG_FILE" <<EOF
+SOURCE_REPO_DIR=$(printf '%q' "$source_repo")
+MANAGED_REPO_DIR=$(printf '%q' "$managed_repo")
+REPO_ORIGIN_URL=$(printf '%q' "$origin_repo")
+REPO_DEFAULT_BRANCH=$(printf '%q' "main")
+OPT_ROOT=$(printf '%q' "$workspace/opt")
+EOF
+
+        prepare_build_repo
+    )
+
+    assert_file_exists "$staged_local_feature/feature.json"
+    [ "$(cat "$staged_local_feature/nested/payload.txt")" = "payload" ] \
+        || fail "Expected local feature nested payload to be copied"
+    [ -L "$staged_local_feature/payload-link" ] \
+        || fail "Expected local feature symlink to be preserved"
+    [ "$(readlink "$staged_local_feature/payload-link")" = "nested/payload.txt" ] \
+        || fail "Expected local feature symlink target to be preserved"
+    assert_file_not_exists "$managed_repo/linux-features/local/repo-feature/feature.json"
+    assert_file_not_exists "$managed_repo/linux-features/local/missing-local/feature.json"
+    assert_file_exists "$managed_repo/linux-features/repo-feature/feature.json"
+}
+
 test_user_local_prepare_build_repo_updates_existing_single_branch_fetch_refspec() {
     info "Checking user-local managed checkout can switch branches after a single-branch clone"
     local workspace="$TMP_DIR/user-local-single-branch-refspec"
@@ -3712,6 +4151,7 @@ main() {
     test_user_local_prepare_build_repo_handles_relative_origin_url
     test_user_local_install_from_update_defers_record_only_metadata
     test_user_local_install_preserves_persisted_x11_preference_on_refresh
+    test_user_local_prepare_build_repo_copies_enabled_local_features
     test_user_local_prepare_build_repo_updates_existing_single_branch_fetch_refspec
     test_user_local_prepare_build_repo_handles_deleted_overlay_paths
     test_user_local_prepare_build_repo_removes_rename_source_paths
