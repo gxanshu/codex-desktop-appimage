@@ -4,6 +4,10 @@ info() {
     echo "[INFO] $*" >&2
 }
 
+warn() {
+    echo "[WARN] $*" >&2
+}
+
 error() {
     echo "[ERROR] $*" >&2
     exit 1

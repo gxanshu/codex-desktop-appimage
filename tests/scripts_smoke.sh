@@ -31,6 +31,20 @@ assert_file_not_exists() {
     [ ! -e "$path" ] || fail "Expected file not to exist: $path"
 }
 
+assert_mode() {
+    local path="$1"
+    local expected="$2"
+    local actual
+    actual="$(python3 - "$path" <<'PY'
+import os
+import sys
+
+print(format(os.lstat(sys.argv[1]).st_mode & 0o777, "o"))
+PY
+)"
+    [ "$actual" = "$expected" ] || fail "Expected mode $expected for $path, got $actual"
+}
+
 assert_contains() {
     local path="$1"
     local pattern="$2"
@@ -1214,6 +1228,10 @@ SCRIPT
     assert_contains "$launcher_stderr" "CODEX_WEBVIEW_PORT must be between 1 and 65535"
     assert_not_contains "$launcher_stderr" "integer expected"
 
+    XDG_CONFIG_HOME="$workspace/help-config" bash "$start_script" --help >"$launcher_stdout" 2>"$launcher_stderr"
+    assert_contains "$launcher_stdout" "electron-flags.conf"
+    assert_file_not_exists "$workspace/help-config/codex-desktop/electron-flags.conf"
+
     cat > "$launcher_probe_script" <<'SCRIPT'
 #!/bin/bash
 set -euo pipefail
@@ -1842,6 +1860,25 @@ PY
     assert_contains "$REPO_DIR/contrib/user-local-install/README.md" "--force-x11"
 }
 
+test_process_detection_helper_cmdline_shapes() {
+    info "Checking Electron helper process detection cmdline shapes"
+    local nul_cmdline="$TMP_DIR/electron-helper-nul.cmdline"
+    local space_cmdline="$TMP_DIR/electron-helper-space.cmdline"
+    local main_cmdline="$TMP_DIR/electron-main.cmdline"
+
+    printf '/opt/codex-desktop/electron\0--type=gpu-process\0--no-sandbox\0' > "$nul_cmdline"
+    printf '/opt/codex-desktop/electron --type=utility --no-sandbox' > "$space_cmdline"
+    printf '/opt/codex-desktop/electron --no-sandbox' > "$main_cmdline"
+
+    (
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/process-detection.sh"
+        cmdline_has_electron_helper_type "$nul_cmdline" || exit 1
+        cmdline_has_electron_helper_type "$space_cmdline" || exit 1
+        ! cmdline_has_electron_helper_type "$main_cmdline" || exit 1
+    ) || fail "Electron helper detection must handle NUL-separated and space-joined cmdline formats"
+}
+
 test_side_by_side_launcher_identity() {
     info "Checking side-by-side launcher identity"
     local workspace="$TMP_DIR/side-by-side-launcher"
@@ -1903,9 +1940,11 @@ test_browser_use_node_repl_fallback_runtime() {
     mkdir -p "$workspace" "$install_dir/resources" "$archive_root/codex-primary-runtime/dependencies/bin"
     make_fake_browser_use_upstream_app "$app_dir"
 
-    # Simulate the current upstream DMG shape: node_repl exists, but it is not a Linux ELF.
-    printf '\xfe\xed\xfa\xcf' > "$app_dir/Contents/Resources/node_repl"
-    chmod +x "$app_dir/Contents/Resources/node_repl"
+    # Simulate the current upstream DMG shape: node_repl is under cua_node/bin,
+    # but the macOS binary is not a Linux ELF.
+    mkdir -p "$app_dir/Contents/Resources/cua_node/bin"
+    printf '\xfe\xed\xfa\xcf' > "$app_dir/Contents/Resources/cua_node/bin/node_repl"
+    chmod +x "$app_dir/Contents/Resources/cua_node/bin/node_repl"
 
     true_bin="$(type -P true)"
     cp "$true_bin" "$archive_root/codex-primary-runtime/dependencies/bin/node_repl"
@@ -1988,6 +2027,7 @@ make_fake_chrome_upstream_app() {
     mkdir -p \
         "$resources_dir/plugins/openai-bundled/.agents/plugins" \
         "$chrome_dir/.codex-plugin" \
+        "$chrome_dir/skills/control-chrome" \
         "$chrome_dir/scripts"
 
     cat > "$resources_dir/plugins/openai-bundled/.agents/plugins/marketplace.json" <<'JSON'
@@ -1999,14 +2039,31 @@ JSON
     cat > "$chrome_dir/scripts/installManifest.mjs" <<'JS'
 var n={extensionId:"hehggadaopoacecdllhhajmbjkdcmajg",extensionHostName:"com.openai.codexextension"};var p=o=>{let t=`${o.extensionHostName}.json`,r={darwin:["Library/Application Support/Google/Chrome/NativeMessagingHosts"],linux:[".config/google-chrome/NativeMessagingHosts"],win32:["AppData/Local/OpenAI/extension"]}[m.platform()];return r.map(s=>l.resolve(m.homedir(),s,t))};
 JS
+    cat > "$chrome_dir/skills/control-chrome/SKILL.md" <<'MD'
+# Chrome
+
+```js
+const { setupBrowserRuntime } = await import("<plugin root>/scripts/browser-client.mjs");
+await setupBrowserRuntime({ globals: globalThis });
+globalThis.browser = await agent.browsers.get("extension");
+nodeRepl.write(await browser.documentation());
+```
+
+Use the browser bound to `browser` for tasks in this skill.
+MD
     cat > "$chrome_dir/scripts/extension-id.json" <<'JSON'
 {"extensionId":"hehggadaopoacecdllhhajmbjkdcmajg","extensionHostName":"com.openai.codexextension"}
 JSON
     cat > "$chrome_dir/scripts/browser-client.mjs" <<'JS'
 import{resolve as GF}from"path";import{homedir as VF,platform as WF}from"os";var Tc=GF(VF(),WF()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome");import{ClassicLevel as KF}from"./node_modules/classic-level.mjs";import{resolve as Gf}from"path";import{tmpdir as YF}from"os";import{cp as ZF,mkdtemp as JF,rm as kS}from"fs/promises";import{existsSync as XF}from"fs";var IS=async(t,e)=>{let r=Gf(Tc,t,"Local Extension Settings",e);if(!XF(r))return null;let n=await JF(Gf(QF(),"codex"));await ZF(r,n,{recursive:!0}),await kS(Gf(n,"LOCK"));let o=new KF(n,{createIfMissing:!1,keyEncoding:"utf8",valueEncoding:"utf8"});try{await o.open();let i=await o.get("extensionInstanceId");if(!i)return null;let s=JSON.parse(i);return typeof s!="string"?null:s}finally{await o.close(),await kS(n,{force:!0,recursive:!0})}},QF=()=>"nodeRepl"in globalThis&&globalThis.nodeRepl?globalThis.nodeRepl.tmpDir:YF();var AS=async t=>{if(t.type!=="extension"||!t.metadata?.extensionInstanceId||!t.metadata.extensionId)return t;let e=await rO(t.metadata.extensionId,t.metadata.extensionInstanceId);return e?{...t,metadata:{...t.metadata,profileName:e.name,profileIsLastUsed:e.isLastUsed.toString(),profileOrdering:e.orderingIndex.toString()}}:t},rO=async(t,e)=>(await nO(t)).find(o=>o.instanceId===e)||null,nO=async t=>{let e=await oO();return await Promise.all(e.map(async r=>({...r,instanceId:await IS(r.id,t).catch(n=>(ee(n),null))})))},oO=async()=>{let t=tO(Tc,"Local State"),e=JSON.parse(await eO(t,"utf8"));return e.profile.profiles_order.map((r,n)=>{let o=e.profile.info_cache[r];return o?{id:r,name:o.name,isLastUsed:e.profile.last_used===r,orderingIndex:n,avatarUrl:o.avatar_icon}:null}).filter(r=>!!r)};
+var oh=Vb(l9.platform()),d9=async e=>{let t=ST(),r=e.filter(o=>o.info.type==="iab"),n=p9(r,t);return await Promise.all(r.filter(o=>!n.includes(o)).map(async({api:o})=>o.close())),[...e.filter(o=>o.info.type!=="iab"),...n]},p9=(e,t)=>t==null?[]:e.filter(r=>r.info.metadata?.codexSessionId===t);
+function lu(e){let t=globalThis.nodeRepl?.env[e];return typeof t=="string"?t:void 0}
+function Me(){let e=globalThis.nodeRepl;return e?.config==null?void 0:e}
+import{platform as yT}from"node:os";function eh(){return"privileged native pipe bridge is not available; browser-client is not trusted"}function th(){let e=globalThis.nodeRepl?.nativePipe;return e==null||typeof e.createConnection!="function"?null:e}var ml=class e{constructor(t){this.socket=t}static async create(t){let r=th();if(r!=null){let n=await r.createConnection(t);return new e(n)}throw new Error(eh())}};
 async fetchBlocked(e){let r=await bS(e.endpoint,{method:"GET"});if(!r.ok)throw new Error(ae(`Browser Use cannot determine if ${e.displayUrl} is allowed. Please try again later or use another source.`));let n=await r.json();return TF(n)}
 JS
     cat > "$chrome_dir/scripts/check-native-host-manifest.js" <<'JS'
+#!/usr/bin/env node
 function getNativeHostManifestLocation() {
   if (process.platform === "win32") {
     const registryKey = `${WINDOWS_NATIVE_HOST_REGISTRY_KEY_PREFIX}\\${expectedHostName}`;
@@ -2026,6 +2083,7 @@ function getNativeHostManifestLocation() {
 }
 JS
     cat > "$chrome_dir/scripts/installed-browsers.js" <<'JS'
+#!/usr/bin/env node
 const KNOWN_BROWSERS = [
   {
     name: "Google Chrome",
@@ -2037,17 +2095,20 @@ const KNOWN_BROWSERS = [
 ];
 JS
     cat > "$chrome_dir/scripts/chrome-is-running.js" <<'JS'
+#!/usr/bin/env node
 const CHROME_PROCESS_NAMES_BY_PLATFORM = {
   darwin: new Set(["Google Chrome", "Google Chrome Helper"]),
   win32: new Set(["chrome.exe"]),
 };
 JS
     cat > "$chrome_dir/scripts/check-extension-installed.js" <<'JS'
+#!/usr/bin/env node
 function resolveChromeUserDataDirectory() {
   return path.join(os.homedir(), ".config", "google-chrome");
 }
 JS
     cat > "$chrome_dir/scripts/open-chrome-window.js" <<'JS'
+#!/usr/bin/env node
 function resolveChromeUserDataDirectory() {
   return path.join(os.homedir(), ".config", "google-chrome");
 }
@@ -2103,6 +2164,11 @@ test_chrome_plugin_staging() {
 
     assert_file_exists "$host"
     [ -x "$host" ] || fail "Expected Chrome extension host to be executable: $host"
+    assert_mode "$chrome_dir/scripts/check-native-host-manifest.js" "755"
+    assert_mode "$chrome_dir/scripts/installed-browsers.js" "755"
+    assert_mode "$chrome_dir/scripts/chrome-is-running.js" "755"
+    assert_mode "$chrome_dir/scripts/check-extension-installed.js" "755"
+    assert_mode "$chrome_dir/scripts/open-chrome-window.js" "755"
     assert_contains "$chrome_dir/scripts/installManifest.mjs" "BraveSoftware/Brave-Browser/NativeMessagingHosts"
     assert_contains "$chrome_dir/scripts/installManifest.mjs" ".config/chromium/NativeMessagingHosts"
     assert_contains "$chrome_dir/scripts/installed-browsers.js" "Brave Browser"
@@ -2122,7 +2188,35 @@ test_chrome_plugin_staging() {
     assert_contains "$chrome_dir/scripts/browser-client.mjs" '"BraveSoftware","Brave-Browser"'
     assert_contains "$chrome_dir/scripts/browser-client.mjs" '".config","chromium"'
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "instanceId:await IS(o.id,t,r)"
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxRankBrowserBackends"
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxFilterBrowserBackends"
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxCloseDiscardedBrowserBackends"
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" "await codexLinuxFilterBrowserBackends"
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" "getUserTabs()"
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" 'globalThis.nodeRepl?.env?.\[e\]'
+    assert_not_contains "$chrome_dir/scripts/browser-client.mjs" 'globalThis.nodeRepl?.env\[e\]'
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxBrowserUseConfigShim"
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" "writeValue: codexLinuxBrowserUseIgnoreConfigWrite"
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" "batchWrite: codexLinuxBrowserUseIgnoreConfigWrite"
+    assert_not_contains "$chrome_dir/scripts/browser-client.mjs" "writeFile"
+    assert_not_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxBrowserUseStringifyToml"
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" 'Object.getPrototypeOf(repl)'
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" 'Object.defineProperty(prototype, "config"'
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxBrowserUseConfigShim();let e=globalThis.nodeRepl"
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" "nativePipe??import.meta.__codexNativePipe"
+    assert_not_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxNativePipeFallback"
+    assert_not_contains "$chrome_dir/scripts/browser-client.mjs" 'await import("node:net")'
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxSiteStatusAllowlistFallback"
+    assert_contains "$chrome_dir/skills/control-chrome/SKILL.md" "activeSummaries"
+    assert_contains "$chrome_dir/skills/control-chrome/SKILL.md" "No active Chrome user tabs"
+    assert_contains "$chrome_dir/skills/control-chrome/SKILL.md" "agent.browsers.list()"
+    assert_contains "$chrome_dir/skills/control-chrome/SKILL.md" "browser.tabs.new()"
+    assert_contains "$chrome_dir/skills/control-chrome/SKILL.md" "tabs: Array.isArray(tabs) ? tabs : \\[\\]"
+    assert_contains "$chrome_dir/skills/control-chrome/SKILL.md" "...(error ? { error } : {})"
+    assert_contains "$chrome_dir/skills/control-chrome/SKILL.md" "Promise.race"
+    assert_contains "$chrome_dir/skills/control-chrome/SKILL.md" "Chrome profile tab probe timed out"
+    assert_not_contains "$chrome_dir/skills/control-chrome/SKILL.md" "{ error: String(error) }"
+    assert_not_contains "$chrome_dir/skills/control-chrome/SKILL.md" 'globalThis.browser = await agent.browsers.get("extension");'
     assert_contains "$install_dir/resources/plugins/openai-bundled/.agents/plugins/marketplace.json" '"name": "chrome"'
     assert_contains "$output_log" "Chrome plugin staged from upstream DMG"
 }
@@ -2171,6 +2265,33 @@ JS
     assert_contains "$browser_client" 'async(e,t,r=$c)'
     assert_contains "$browser_client" "instanceId:await bk(o.id,e,r)"
     assert_contains "$browser_client" "codexLinuxRankBrowserBackends"
+
+    cat > "$browser_client" <<'JS'
+async function sye({globals:e}){return e}export{sye as setupBrowserRuntime};
+JS
+    local patch_log="$workspace/current-browser-client.log"
+    node "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$chrome_dir" >"$patch_log" 2>&1
+    assert_not_contains "$patch_log" "browser-client.mjs missing patch target for Linux Chrome profile roots"
+    assert_not_contains "$patch_log" "browser-client.mjs missing patch target for Linux Chrome profile metadata lookup"
+    assert_not_contains "$patch_log" "browser-client.mjs missing patch target for Linux Chrome profile instance matching"
+    assert_not_contains "$patch_log" "browser-client.mjs missing patch target for Linux Chrome active profile backend ordering"
+
+    cat > "$browser_client" <<'JS'
+import p$,{platform as ek}from"node:os";import{readFile as a$}from"fs/promises";import{resolve as u$}from"path";import{resolve as Xq}from"path";import{homedir as Qq,platform as e$}from"os";var ld=Xq(Qq(),e$()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome");import{ClassicLevel as t$}from"./node_modules/classic-level.mjs";import{resolve as Zh}from"path";import{tmpdir as r$}from"os";import{cp as n$,mkdtemp as o$,rm as YA}from"fs/promises";import{existsSync as i$}from"fs";var ZA=async(e,t)=>{let r=Zh(ld,e,"Local Extension Settings",t);if(!i$(r))return null;let n=await o$(Zh(s$(),"codex"));await n$(r,n,{recursive:!0}),await YA(Zh(n,"LOCK"));let o=new t$(n,{createIfMissing:!1,keyEncoding:"utf8",valueEncoding:"utf8"});try{await o.open();let i=await o.get("extensionInstanceId");if(!i)return null;let s=JSON.parse(i);return typeof s!="string"?null:s}finally{await o.close(),await YA(n,{force:!0,recursive:!0})}},s$=()=>"nodeRepl"in globalThis&&globalThis.nodeRepl?globalThis.nodeRepl.tmpDir:r$();var XA=async e=>{if(e.type!=="extension"||!e.metadata?.extensionInstanceId||!e.metadata.extensionId)return e;let t=await l$(e.metadata.extensionId,e.metadata.extensionInstanceId);return t?{...e,metadata:{...e.metadata,profileName:t.name,profileIsLastUsed:t.isLastUsed.toString(),profileOrdering:t.orderingIndex.toString()}}:e},l$=async(e,t)=>(await c$(e)).find(o=>o.instanceId===t)||null,c$=async e=>{let t=await d$();return await Promise.all(t.map(async r=>({...r,instanceId:await ZA(r.id,e).catch(n=>(ue(n),null))})))},d$=async()=>{let e=u$(ld,"Local State"),t=JSON.parse(await a$(e,"utf8"));return t.profile.profiles_order.map((r,n)=>{let o=t.profile.info_cache[r];return o?{id:r,name:o.name,isLastUsed:t.profile.last_used===r,orderingIndex:n,avatarUrl:o.avatar_icon}:null}).filter(r=>!!r)};var Qh=Xy(p$.platform()),f$=async(e,{codexSessionId:t})=>{let r=Vu(Vy),n=e.filter(i=>i.info.type==="iab"),o=m$(n,t,r);return await Promise.all(n.filter(i=>!o.includes(i)).map(async({api:i})=>i.close())),[...e.filter(i=>i.info.type!=="iab"),...o]},m$=(e,t,r)=>t==null?[]:e.filter(n=>n.info.metadata?.codexSessionId===t&&(r==null||n.info.metadata.codexAppBuildFlavor===r));function eg(e){return e}function cd(e){return e==="extension"||e==="iab"||e==="cdp"}function dd(e){return e}function lk({browserId:e,clientInfo:t,requestedBrowserId:r}){return cd(r)?eg(t.type)===r:e===r}var B$={};async function executeAgentCommand(l){let i=[],n={};let{type:d,...p}=l;if("browser_id"in p){if(cd(p.browser_id)){let h=dd(p.browser_id);tg(h)||hk({diagnostics:n,reason:"backend-disabled",requestedBrowserId:p.browser_id}),ck(h)}let f=i.find(h=>lk({browserId:h.browserId,clientInfo:h.clientInfo,requestedBrowserId:p.browser_id}));}}
+JS
+    node "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$chrome_dir" >/dev/null 2>&1
+    assert_contains "$browser_client" "codexLinuxChromeUserDataDirectories"
+    assert_contains "$browser_client" '"BraveSoftware","Brave-Browser"'
+    assert_contains "$browser_client" '".config","chromium"'
+    assert_contains "$browser_client" 'async(e,t,r=ld)'
+    assert_contains "$browser_client" "instanceId:await ZA(o.id,e,r)"
+    assert_contains "$browser_client" "codexLinuxRankBrowserBackends"
+    assert_contains "$browser_client" "codexLinuxFilterBrowserBackends"
+    assert_contains "$browser_client" "codexLinuxCloseDiscardedBrowserBackends"
+    assert_contains "$browser_client" "await codexLinuxFilterBrowserBackends"
+    assert_contains "$browser_client" "p$.platform()"
+    assert_contains "$browser_client" "codexLinuxRejectAmbiguousBrowserAlias"
+    assert_contains "$browser_client" "codexLinuxRejectAmbiguousBrowserAlias(p.browser_id,i)"
 }
 
 test_chrome_marketplace_fallback_synthesis() {
@@ -2493,7 +2614,10 @@ NODE
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform!==`linux`' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath' '3'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../.codex-linux/codex-desktop-tray.png`)' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../.codex-linux/codex-desktop.png`)' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`)' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`)&&!this.isAppQuitting' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'setLinuxTrayContextMenu(){' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&this.setLinuxTrayContextMenu(),this.tray.on(`click`' '1'
@@ -3341,7 +3465,8 @@ JS
 
     # Branch 1: no env var, no settings.json — only the plugin manifest gate runs.
     HOME="$fake_home" XDG_CONFIG_HOME= unset_env_value="" \
-        env -u CODEX_LINUX_ENABLE_COMPUTER_USE_UI HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
+        env -u CODEX_LINUX_ENABLE_COMPUTER_USE_UI -u CODEX_LINUX_APP_ID -u CODEX_APP_ID -u CODEX_LINUX_SETTINGS_FILE \
+        HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
         node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$main_bundle" '(t===`darwin`||t===`linux`)&&e.computerUse'
     assert_not_contains "$main_bundle" 'return n===`linux`?{...e,computerUse:!0,computerUseNodeRepl:!0}'
@@ -3354,7 +3479,8 @@ JS
     printf '%s\n' "$renderer_body" > "$renderer_asset"
     printf '%s\n' "$install_flow_body" > "$install_flow_asset"
 
-    env CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1 HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
+    env -u CODEX_LINUX_APP_ID -u CODEX_APP_ID -u CODEX_LINUX_SETTINGS_FILE \
+        CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1 HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
         node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$main_bundle" '(t===`darwin`||t===`linux`)&&e.computerUse'
     assert_contains "$main_bundle" 'return n===`linux`?{...e,computerUse:!0,computerUseNodeRepl:!0}'
@@ -3368,7 +3494,8 @@ JS
     printf '%s\n' "$install_flow_body" > "$install_flow_asset"
     printf '%s\n' '{"codex-linux-computer-use-ui-enabled": true}' > "$fake_home/.config/codex-desktop/settings.json"
 
-    env -u CODEX_LINUX_ENABLE_COMPUTER_USE_UI HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
+    env -u CODEX_LINUX_ENABLE_COMPUTER_USE_UI -u CODEX_LINUX_APP_ID -u CODEX_APP_ID -u CODEX_LINUX_SETTINGS_FILE \
+        HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
         node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$main_bundle" 'return n===`linux`?{...e,computerUse:!0,computerUseNodeRepl:!0}'
     assert_contains "$renderer_asset" 'function hae(e){return e===`macOS`||e===`windows`||e===`linux`}'
@@ -3386,6 +3513,28 @@ test_linux_file_manager_patch_fails_soft() {
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$output_log" 'Failed to apply Linux File Manager Patch'
+}
+
+test_patcher_enforce_critical_gate() {
+    info "Checking --enforce-critical patcher gate"
+    local workspace="$TMP_DIR/enforce-critical-gate"
+    local extracted="$workspace/extracted"
+    local output_log="$workspace/output.log"
+    local report_json="$workspace/reports/patch-report.json"
+    local status=0
+
+    mkdir -p "$workspace"
+    # Minimal fixture: most required patches cannot match, so enforcement must fail.
+    make_fake_extracted_asar "$extracted" 'let n=require(`electron`);process.platform===`win32`&&D.removeMenu(),'
+
+    # Bare invocation stays fail-soft (exit 0) — build scripts opt into enforcement.
+    node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1 \
+        || fail "expected bare patcher invocation to stay fail-soft on this fixture"
+
+    node "$REPO_DIR/scripts/patch-linux-window-ui.js" --enforce-critical --report-json "$report_json" "$extracted" >"$output_log" 2>&1 || status=$?
+    [ "$status" -ne 0 ] || fail "expected --enforce-critical to exit non-zero on critical patch failures"
+    assert_contains "$output_log" 'Critical patch failures'
+    [ -f "$report_json" ] || fail "expected patch report to be written despite enforcement failure"
 }
 
 test_webview_probe_equivalence() {
@@ -3704,6 +3853,8 @@ test_user_local_install_from_update_defers_record_only_metadata() {
     local fake_bin="$workspace/bin"
     local home="$workspace/home"
     local marker="$workspace/record-only-attempted"
+    local metadata_file="$workspace/state/codex-desktop-linux/metadata.env"
+    local app_dir="$home/.local/opt/codex-desktop-linux/codex-app"
 
     mkdir -p "$fake_bin"
     cat > "$fake_bin/7z" <<'SCRIPT'
@@ -3717,6 +3868,8 @@ SCRIPT
     printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/systemctl"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/update-desktop-database"
     chmod +x "$fake_bin/7z" "$fake_bin/systemctl" "$fake_bin/update-desktop-database"
+    mkdir -p "$app_dir"
+    printf '%s\n' "26.609.41114" > "$app_dir/version"
 
     PATH="$fake_bin:$PATH" \
         HOME="$home" \
@@ -3726,6 +3879,7 @@ SCRIPT
         CODEX_USER_LOCAL_SOURCE_REPO_DIR="$REPO_DIR" \
         bash "$REPO_DIR/contrib/user-local-install/install-user-local.sh" --from-update >/dev/null
     assert_file_not_exists "$marker"
+    assert_file_not_exists "$metadata_file"
 
     PATH="$fake_bin:$PATH" \
         HOME="$home" \
@@ -3734,7 +3888,9 @@ SCRIPT
         RECORD_ONLY_MARKER="$marker" \
         CODEX_USER_LOCAL_SOURCE_REPO_DIR="$REPO_DIR" \
         bash "$REPO_DIR/contrib/user-local-install/install-user-local.sh" >/dev/null
-    assert_file_exists "$marker"
+    assert_file_not_exists "$marker"
+    assert_file_exists "$metadata_file"
+    assert_contains "$metadata_file" "DMG_SHA256=unavailable"
 }
 
 test_user_local_install_preserves_persisted_x11_preference_on_refresh() {
@@ -4131,6 +4287,7 @@ main() {
     test_chrome_browser_client_profile_root_variants
     test_chrome_marketplace_fallback_synthesis
     test_chrome_native_host_manifest_writer
+    test_process_detection_helper_cmdline_shapes
     test_webview_probe_equivalence
     test_side_by_side_launcher_identity
     test_linux_file_manager_patch_smoke
@@ -4144,6 +4301,7 @@ main() {
     test_linux_computer_use_gate_patch_smoke
     test_linux_computer_use_ui_opt_in_smoke
     test_linux_file_manager_patch_fails_soft
+    test_patcher_enforce_critical_gate
     test_user_local_prepare_build_repo_overlays_committed_local_changes
     test_user_local_prepare_build_repo_detects_default_branch_without_recorded_branch
     test_user_local_prepare_build_repo_ignores_stale_recorded_default_branch
