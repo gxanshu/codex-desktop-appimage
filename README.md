@@ -302,6 +302,7 @@ make clean-dist
 | `ConnectTimeoutError` for `www.electronjs.org` during `@electron/rebuild` | Re-run `make build-app`; the installer now uses `https://artifacts.electronjs.org/headers/dist` for Electron headers by default |
 | Computer Use AT-SPI tree empty | Run `codex-computer-use-linux setup` to flip GNOME accessibility on, then restart the target app |
 | Stale `codex-update-manager` service from an old native package install | `systemctl --user disable --now codex-update-manager.service` once in the affected session, then remove `/opt/codex-desktop` and any installed deb/rpm/pacman packages from the upstream project |
+| Resize ghosting or stale frame trails | Try `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 ./codex-app/start.sh` or `--disable-gpu-compositing` |
 
 ## How it works
 

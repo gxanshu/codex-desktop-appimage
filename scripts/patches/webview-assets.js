@@ -1,7 +1,14 @@
 "use strict";
 
+const { recordStrategy } = require("./strategy-telemetry.js");
+
 const fs = require("node:fs");
 const path = require("node:path");
+
+const {
+  escapeRegExp,
+  findMatchingBrace,
+} = require("./shared.js");
 
 // Webview asset patches target hashed browser chunks copied out of app.asar.
 // They stay fail-soft because upstream chunk names and minified symbols drift.
@@ -220,12 +227,21 @@ function applyLinuxTooltipWindowControlsCollisionPatch(currentSource) {
   const patchedMiddleware =
     `middleware:[a({mainAxis:C,crossAxis:t}),c({${currentPadding}}),l({${currentPadding}}),u({${currentPadding},apply({availableWidth:e,availableHeight:t,elements:n,rects:r})`;
 
-  if (currentSource.includes(defaultMiddleware)) {
-    return currentSource.split(defaultMiddleware).join(patchedMiddleware);
+  let patchedSource = currentSource;
+  if (patchedSource.includes(defaultMiddleware)) {
+    patchedSource = patchedSource.split(defaultMiddleware).join(patchedMiddleware);
   }
 
-  if (currentSource.includes(currentPadding)) {
-    return currentSource;
+  const middlewarePattern =
+    /middleware:\[([A-Za-z_$][\w$]*)\(\{mainAxis:([^{}]*?),crossAxis:([^{}]*?)\}\),([A-Za-z_$][\w$]*)\(\{padding:8\}\),([A-Za-z_$][\w$]*)\(\{padding:8\}\),([A-Za-z_$][\w$]*)\(\{padding:8,apply\(\{availableWidth:([A-Za-z_$][\w$]*),availableHeight:([A-Za-z_$][\w$]*),elements:([A-Za-z_$][\w$]*),rects:([A-Za-z_$][\w$]*)\}\)/g;
+  patchedSource = patchedSource.replace(
+    middlewarePattern,
+    (_match, offsetAlias, mainAxis, crossAxis, shiftAlias, flipAlias, sizeAlias, availableWidth, availableHeight, elements, rects) =>
+      `middleware:[${offsetAlias}({mainAxis:${mainAxis},crossAxis:${crossAxis}}),${shiftAlias}({${currentPadding}}),${flipAlias}({${currentPadding}}),${sizeAlias}({${currentPadding},apply({availableWidth:${availableWidth},availableHeight:${availableHeight},elements:${elements},rects:${rects}})`,
+  );
+
+  if (patchedSource !== currentSource || patchedSource.includes(currentPadding)) {
+    return patchedSource;
   }
 
   if (currentSource.includes("middleware:[") && currentSource.includes("availableWidth")) {
@@ -235,6 +251,37 @@ function applyLinuxTooltipWindowControlsCollisionPatch(currentSource) {
   }
 
   return currentSource;
+}
+
+function findLocalEnvironmentActionModalFunction(currentSource) {
+  const componentPattern =
+    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=\(0,([A-Za-z_$][\w$]*)\.c\)\(\d+\),\{action:([A-Za-z_$][\w$]*),[^{}]*onUpdate:([A-Za-z_$][\w$]*),workspaceRoot:([A-Za-z_$][\w$]*)\}=\2,/g;
+  let match;
+  while ((match = componentPattern.exec(currentSource)) != null) {
+    const openBrace = currentSource.indexOf("{", match.index);
+    const closeBrace = findMatchingBrace(currentSource, openBrace);
+    if (closeBrace === -1) {
+      continue;
+    }
+    const text = currentSource.slice(match.index, closeBrace + 1);
+    if (
+      text.includes("settings.localEnvironments.actions.add.description") &&
+      text.includes("threadPage.runAction.setup.commandLabel") &&
+      text.includes(`local-env-action-name-\${${match[5]}.id}`)
+    ) {
+      return {
+        start: match.index,
+        end: closeBrace + 1,
+        text,
+        paramVar: match[2],
+        cacheVar: match[3],
+        actionVar: match[5],
+        updateVar: match[6],
+        workspaceVar: match[7],
+      };
+    }
+  }
+  return null;
 }
 
 function applyLinuxThreadSidePanelNativeTooltipPatch(currentSource) {
@@ -363,6 +410,117 @@ function applyLinuxBrowserUseNonLocalNavigationPatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxChatSearchHydrationPatch(currentSource) {
+  if (currentSource.includes("function codexLinuxHydrateSearchConversation(")) {
+    return currentSource;
+  }
+
+  if (!currentSource.includes("search-threads-for-host")) {
+    return currentSource;
+  }
+
+  let patchedSource = currentSource;
+  const requestAliasMatch = patchedSource.match(
+    /([A-Za-z_$][\w$]*)\(`search-threads-for-host`,\{hostId:[A-Za-z_$][\w$]*,query:/u,
+  );
+  const requestAlias = requestAliasMatch?.[1] ?? null;
+
+  const asyncSearchNeedle =
+    /([A-Za-z_$][\w$]*)\.map\(([A-Za-z_$][\w$]*)=>([A-Za-z_$][\w$]*)\(`search-threads-for-host`,\{hostId:\2,query:([A-Za-z_$][\w$]*),limit:([A-Za-z_$][\w$]*)\}\)\)/u;
+  patchedSource = patchedSource.replace(
+    asyncSearchNeedle,
+    (_match, hostsVar, hostVar, requestVar, queryVar, limitVar) =>
+      `${hostsVar}.map(${hostVar}=>${requestVar}(\`search-threads-for-host\`,{hostId:${hostVar},query:${queryVar},limit:${limitVar}}).then(codexLinuxSearchResults=>codexLinuxSearchResults.map(codexLinuxSearchResult=>({...codexLinuxSearchResult,hostId:${hostVar}}))))`,
+  );
+
+  patchedSource = patchedSource.replace(
+    /return\[\{kind:`local`,threadKey:/g,
+    "return[{kind:`local`,hostId:e.hostId??`local`,threadKey:",
+  );
+  patchedSource = patchedSource.replace(
+    /return\{kind:`local`,threadKey:/g,
+    "return{kind:`local`,hostId:e.hostId??`local`,threadKey:",
+  );
+
+  patchedSource = patchedSource.replace(
+    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return \2\.threadKey\}function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return \4\.threadKey\}/u,
+    "function $1($2){return $2}function $3($4){return $4}",
+  );
+
+  let patchedResultSelectCache = false;
+  const resultSelectCachePattern =
+    /(?<cache>[A-Za-z_$][\w$]*)\[(?<closeSlot>\d+)\]!==(?<close>[A-Za-z_$][\w$]*)\|\|\k<cache>\[(?<routeSlot>\d+)\]!==(?<route>[A-Za-z_$][\w$]*)\|\|\k<cache>\[(?<localSlot>\d+)\]!==(?<local>[A-Za-z_$][\w$]*)\|\|\k<cache>\[(?<resultSlot>\d+)\]!==(?<result>[A-Za-z_$][\w$]*)\.threadKey\?\((?<callback>[A-Za-z_$][\w$]*)=\(\)=>\{(?<select>[A-Za-z_$][\w$]*)\(\k<result>\.threadKey,\k<local>,\k<route>\),\k<close>\(\)\},\k<cache>\[\k<closeSlot>\]=\k<close>,\k<cache>\[\k<routeSlot>\]=\k<route>,\k<cache>\[\k<localSlot>\]=\k<local>,\k<cache>\[\k<resultSlot>\]=\k<result>\.threadKey,\k<cache>\[(?<callbackSlot>\d+)\]=\k<callback>\):\k<callback>=\k<cache>\[\k<callbackSlot>\]/u;
+  patchedSource = patchedSource.replace(
+    resultSelectCachePattern,
+    (...args) => {
+      const {
+        cache: cacheVar,
+        closeSlot,
+        close: closeVar,
+        routeSlot,
+        route: routeVar,
+        localSlot,
+        local: localVar,
+        resultSlot,
+        result: resultVar,
+        callbackSlot,
+        callback: callbackVar,
+        select: selectFn,
+      } = args[args.length - 1];
+      patchedResultSelectCache = true;
+      return `${cacheVar}[${closeSlot}]!==${closeVar}||${cacheVar}[${routeSlot}]!==${routeVar}||${cacheVar}[${localSlot}]!==${localVar}||${cacheVar}[${resultSlot}]!==${resultVar}?(${callbackVar}=()=>{${selectFn}(${resultVar},${localVar},${routeVar}),${closeVar}()},${cacheVar}[${closeSlot}]=${closeVar},${cacheVar}[${routeSlot}]=${routeVar},${cacheVar}[${localSlot}]=${localVar},${cacheVar}[${resultSlot}]=${resultVar},${cacheVar}[${callbackSlot}]=${callbackVar}):${callbackVar}=${cacheVar}[${callbackSlot}]`;
+    },
+  );
+  if (!patchedResultSelectCache) {
+    console.warn(
+      "WARN: Could not find chat search result selection cache — skipping Linux chat search hydration patch",
+    );
+    return currentSource;
+  }
+
+  if (requestAlias == null) {
+    if (patchedSource !== currentSource) {
+      console.warn(
+        "WARN: Could not find chat search request helper — skipping Linux chat search hydration patch",
+      );
+      return currentSource;
+    }
+    return currentSource;
+  }
+
+  const routePattern =
+    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\2\);if\(\5!=null\)\{\3\(\5\);return\}\4\(([A-Za-z_$][\w$]*)\(\2\)\)\}/u;
+  const routeMatch = patchedSource.match(routePattern);
+  if (routeMatch == null) {
+    if (
+      currentSource.includes("search-threads-for-host") &&
+      currentSource.includes("threadKey")
+    ) {
+      console.warn(
+        "WARN: Could not find chat search route handler — skipping Linux chat search hydration patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const [
+    routeNeedle,
+    routeFn,
+    targetArg,
+    localNavigateArg,
+    routeNavigateArg,
+    conversationVar,
+    localThreadKeyFn,
+    routeThreadKeyFn,
+  ] = routeMatch;
+  const helper = `function codexLinuxSearchThreadKey(e){return e&&typeof e===\`object\`?e.threadKey:e}function codexLinuxHydrateSearchConversation(e,t){try{if(e==null||typeof e!==\`object\`||e.kind!==\`local\`)return Promise.resolve();let n=e.hostId??\`local\`,r=${requestAlias}(\`load-recent-conversation-ids-for-host\`,{hostId:n,conversationIds:[t]}),i=new Promise(e=>globalThis.setTimeout(e,1500));return Promise.race([r,i]).catch(()=>{})}catch{return Promise.resolve()}}`;
+  const routePatch =
+    `${helper}async function ${routeFn}(${targetArg},${localNavigateArg},${routeNavigateArg}){let codexLinuxRouteKey=codexLinuxSearchThreadKey(${targetArg}),${conversationVar}=${localThreadKeyFn}(codexLinuxRouteKey);if(${conversationVar}!=null){await codexLinuxHydrateSearchConversation(${targetArg},${conversationVar});${localNavigateArg}(${conversationVar});return}${routeNavigateArg}(${routeThreadKeyFn}(codexLinuxRouteKey))}`;
+  patchedSource = patchedSource.replace(routeNeedle, routePatch);
+
+  return patchedSource;
+}
+
 function applyLinuxBrowserUseExternalAvailabilityPatch(currentSource) {
   const externalFeatureNeedle = "featureName:`browser_use_external`";
   const statsigNeedle = "410065390";
@@ -418,6 +576,7 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
     "mentions_v2",
     "plugins",
     "remote_control",
+    "remote_plugin",
     "tool_call_mcp_elicitation",
     "tool_suggest",
   ]);
@@ -442,7 +601,14 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
       /(for\(let ([A-Za-z_$][\w$]*) of [A-Za-z_$][\w$]*\)\{let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\[\2\];\3!=null&&\(([A-Za-z_$][\w$]*)\[\2\]=\3\)\})return \4\[([A-Za-z_$][\w$]*)\]=([A-Za-z_$][\w$]*),\4\}/u;
     const dynamicBuilderExtraMatch = currentSource.match(dynamicBuilderExtraRegex);
     if (dynamicBuilderExtraMatch != null) {
-      const [, loopBlock, , , enablementVar] = dynamicBuilderExtraMatch;
+      const [, loopBlock, , , enablementVar, featureKeyVar] = dynamicBuilderExtraMatch;
+      const featureKeyDeclaration = new RegExp(
+        `${escapeRegExp(featureKeyVar)}=\`remote_plugin\``,
+        "u",
+      );
+      if (featureKeyDeclaration.test(currentSource)) {
+        return currentSource;
+      }
       return currentSource.replace(
         dynamicBuilderExtraRegex,
         `${loopBlock}return ${enablementVar}}`,
@@ -494,7 +660,92 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
   ].join("");
 }
 
+function applyLinuxAppServerBackfillWaitPatch(currentSource) {
+  const helperSource =
+    "function codexLinuxIsStateDbBackfillMessage(e){return typeof e===`string`&&e.toLowerCase().includes(`state db backfill is running`)}" +
+    "function codexLinuxStateDbBackfillMessage(e){return`Codex state database backfill is still running; waiting up to 5 minutes before surfacing a startup error. ${e}`}" +
+    "function codexLinuxAppServerBackfillTimeoutMs(e,t){return t===3e4&&(e===`thread/start`||e===`config/read`||e===`account/read`)?3e5:t}";
+  const parserNeedle =
+    /function\s+([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{if\(\2\.startsWith\(`Parse Error`\)\)return\{code:`restart-required`\};/;
+  const parserPatchedRegex =
+    /codexLinuxIsStateDbBackfillMessage\([A-Za-z_$][\w$]*\)\)return\{code:`connection-failed`/;
+  const timeoutNeedle =
+    /createRequest\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=([^,]+),([A-Za-z_$][\w$]*)=\3\?\.timeoutMs\?\?0,/;
+  const timeoutPatchedRegex =
+    /(?:^|[;,])\s*[A-Za-z_$][\w$]*=codexLinuxAppServerBackfillTimeoutMs\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)/;
+  const shouldPatchParser = parserNeedle.test(currentSource) || parserPatchedRegex.test(currentSource);
+  const shouldPatchTimeout = timeoutNeedle.test(currentSource) || timeoutPatchedRegex.test(currentSource);
+  let patchedSource = currentSource;
+  let changed = false;
+
+  if (!patchedSource.includes("function codexLinuxIsStateDbBackfillMessage(")) {
+    const helperAnchors = [
+      "function za(e){let t=La.safeParse(e);return t.success?new Ba(t.data):e}",
+      "function za(e){",
+    ];
+    const helperAnchor = helperAnchors.find((anchor) => patchedSource.includes(anchor));
+    if (helperAnchor != null) {
+      patchedSource = patchedSource.replace(helperAnchor, `${helperSource}${helperAnchor}`);
+      changed = true;
+    }
+  }
+
+  if (shouldPatchParser && !parserPatchedRegex.test(patchedSource)) {
+    const parserPatched = patchedSource.replace(
+      parserNeedle,
+      (_match, fnName, messageVar) => {
+        const helperPrefix = patchedSource.includes("function codexLinuxIsStateDbBackfillMessage(")
+          ? ""
+          : helperSource;
+        return `${helperPrefix}function ${fnName}(${messageVar}){if(codexLinuxIsStateDbBackfillMessage(${messageVar}))return{code:\`connection-failed\`,message:codexLinuxStateDbBackfillMessage(${messageVar})};if(${messageVar}.startsWith(\`Parse Error\`))return{code:\`restart-required\`};`;
+      },
+    );
+    if (parserPatched !== patchedSource) {
+      patchedSource = parserPatched;
+      changed = true;
+    }
+  }
+
+  if (
+    shouldPatchTimeout &&
+    !timeoutPatchedRegex.test(patchedSource) &&
+    patchedSource.includes("function codexLinuxAppServerBackfillTimeoutMs(")
+  ) {
+    const timeoutPatched = patchedSource.replace(
+      timeoutNeedle,
+      (_match, methodVar, paramsVar, optionsVar, requestIdVar, requestIdExpr, timeoutVar) =>
+        `createRequest(${methodVar},${paramsVar},${optionsVar}){let ${requestIdVar}=${requestIdExpr},${timeoutVar}=${optionsVar}?.timeoutMs??0;${timeoutVar}=codexLinuxAppServerBackfillTimeoutMs(${methodVar},${timeoutVar});let `,
+    );
+    if (timeoutPatched !== patchedSource) {
+      patchedSource = timeoutPatched;
+      changed = true;
+    }
+  }
+
+  if (
+    (shouldPatchParser || shouldPatchTimeout) &&
+    !patchedSource.includes("function codexLinuxIsStateDbBackfillMessage(")
+  ) {
+    console.warn(
+      "WARN: Could not insert app-server backfill wait helper — startup backfill may still time out early",
+    );
+  } else if (
+    (shouldPatchParser && !parserPatchedRegex.test(patchedSource)) ||
+    (shouldPatchTimeout && !timeoutPatchedRegex.test(patchedSource))
+  ) {
+    console.warn(
+      "WARN: App-server backfill wait patch applied only partially — startup backfill may still time out early",
+    );
+  }
+
+  return patchedSource;
+}
+
 function applyLinuxI18nGatePatch(currentSource) {
+  const alreadyPatchedI18nGateRegexes = [
+    /([A-Za-z_$][\w$]*)=[^;]*?\.get\(`enable_i18n`,!1\)[^;]*;let [^;]*,([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\.localeOverride\),[A-Za-z_$][\w$]*=\1\|\|\2!=null/u,
+    /([A-Za-z_$][\w$]*)=[^;]*?\.get\(`enable_i18n`,!0\)[^;]*,([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\.localeOverride\);\1=\1\|\|\2!=null;/u,
+  ];
   let patchedSource = currentSource.replace(
     /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*\?\.get\(`enable_i18n`,!1\)(?:,[^;]+?)?);let ([A-Za-z_$][\w$]*)=\1,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*\?\.get\(`locale_source`,`IDE`\)),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.localeOverride\)/g,
     (
@@ -546,7 +797,11 @@ function applyLinuxI18nGatePatch(currentSource) {
     },
   );
 
-  if (currentSource.includes("enable_i18n") && patchedSource === currentSource) {
+  if (
+    currentSource.includes("enable_i18n") &&
+    patchedSource === currentSource &&
+    !alreadyPatchedI18nGateRegexes.some((regex) => regex.test(currentSource))
+  ) {
     console.warn("WARN: Could not find i18n gate needle — skipping Linux i18n gate patch");
   }
 
@@ -598,15 +853,16 @@ function applyLinuxConfigWriteVersionConflictPatch(currentSource) {
 
 function applySubagentNicknameMetadataPatch(currentSource) {
   let patchedSource = currentSource;
-  const sourceShapePatchedMarker = "`subAgent`in e?e.subAgent:`subagent`in e?e.subagent:null";
-  const nicknamePatchedMarker =
-    "Zl(e.agentNickname)??Zl(e.agent_nickname)??Zl(B(e.source)?.agentNickname)";
+  const sourceShapePatchedRegex =
+    /`subAgent`in ([A-Za-z_$][\w$]*)\?\1\.subAgent:`subagent`in \1\?\1\.subagent:null/u;
+  const nicknamePatchedRegex =
+    /([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.agentNickname\)\?\?\1\(\2\.agent_nickname\)\?\?\1\([A-Za-z_$][\w$]*\(\2\.source\)\?\.agentNickname\)/u;
 
   const sourceShapeNeedle =
     "function Mi(e){return`subAgent`in e?e.subAgent:null}function Ni(e){return typeof e==`string`?Pi():`thread_spawn`in e?{parentThreadId:j(e.thread_spawn.parent_thread_id),depth:e.thread_spawn.depth,agentNickname:e.thread_spawn.agent_nickname,agentRole:e.thread_spawn.agent_role}:Pi()}";
   const sourceShapePatch =
     "function Mi(e){return`subAgent`in e?e.subAgent:`subagent`in e?e.subagent:null}function Ni(e){return typeof e==`string`?Pi():`thread_spawn`in e?{parentThreadId:j(e.thread_spawn.parent_thread_id),depth:e.thread_spawn.depth,agentNickname:e.thread_spawn.agent_nickname,agentRole:e.thread_spawn.agent_role}:Pi()}";
-  if (patchedSource.includes(sourceShapePatchedMarker)) {
+  if (sourceShapePatchedRegex.test(patchedSource)) {
     // Already patched.
   } else if (patchedSource.includes(sourceShapeNeedle)) {
     patchedSource = patchedSource.replace(sourceShapeNeedle, sourceShapePatch);
@@ -625,7 +881,7 @@ function applySubagentNicknameMetadataPatch(currentSource) {
     "function Xl(e){return e==null?null:Zl(e.agentNickname)??Zl(B(e.source)?.agentNickname)}";
   const nicknamePatch =
     "function Xl(e){return e==null?null:Zl(e.agentNickname)??Zl(e.agent_nickname)??Zl(B(e.source)?.agentNickname)}";
-  if (patchedSource.includes(nicknamePatchedMarker)) {
+  if (nicknamePatchedRegex.test(patchedSource)) {
     // Already patched.
   } else if (patchedSource.includes(nicknameNeedle)) {
     patchedSource = patchedSource.replace(nicknameNeedle, nicknamePatch);
@@ -642,7 +898,7 @@ function applySubagentNicknameMetadataPatch(currentSource) {
 
   if (
     patchedSource === currentSource &&
-    !(currentSource.includes(sourceShapePatchedMarker) && currentSource.includes(nicknamePatchedMarker)) &&
+    !(sourceShapePatchedRegex.test(currentSource) && nicknamePatchedRegex.test(currentSource)) &&
     (currentSource.includes("agentNickname") ||
       currentSource.includes("agent_nickname") ||
       currentSource.includes("thread_spawn"))
@@ -666,28 +922,23 @@ function applyLocalEnvironmentActionModalDraftPatch(currentSource) {
     return currentSource;
   }
 
-  const functionStart = currentSource.indexOf("function gd(e){");
-  if (functionStart === -1) {
+  const modalFunction = findLocalEnvironmentActionModalFunction(currentSource);
+  if (modalFunction == null) {
     console.warn(
       "WARN: Could not find local environment action modal component — skipping action input patch",
     );
     return currentSource;
   }
 
-  const functionEnd = currentSource.indexOf("var _d=", functionStart);
-  if (functionEnd === -1) {
-    console.warn(
-      "WARN: Could not find local environment action modal component boundary — skipping action input patch",
-    );
-    return currentSource;
-  }
-
-  const beforeFunction = currentSource.slice(0, functionStart);
-  const afterFunction = currentSource.slice(functionEnd);
-  let patchedFunction = currentSource.slice(functionStart, functionEnd);
-  const stateNeedle = "workspaceRoot:u}=e,d=Gt()";
+  const beforeFunction = currentSource.slice(0, modalFunction.start);
+  const afterFunction = currentSource.slice(modalFunction.end);
+  let patchedFunction = modalFunction.text;
+  const reactVar =
+    currentSource.match(/\(0,([A-Za-z_$][\w$]*)\.useState\)\(/)?.[1] ?? "Q";
+  const { actionVar, cacheVar, paramVar, updateVar, workspaceVar } = modalFunction;
+  const stateNeedle = `workspaceRoot:${workspaceVar}}=${paramVar},`;
   const statePatch =
-    "workspaceRoot:u}=e,[codexLinuxActionDraft,codexLinuxSetActionDraft]=(0,Q.useState)(()=>n),codexLinuxUpdateActionDraft=e=>(codexLinuxSetActionDraft(t=>({...t,...e})),l(e)),d=Gt()";
+    `workspaceRoot:${workspaceVar}}=${paramVar},[codexLinuxActionDraft,codexLinuxSetActionDraft]=(0,${reactVar}.useState)(()=>${actionVar}),codexLinuxUpdateActionDraft=codexLinuxPatch=>(codexLinuxSetActionDraft(codexLinuxDraft=>({...codexLinuxDraft,...codexLinuxPatch})),${updateVar}(codexLinuxPatch)),`;
   const requiredReplacements = [
     {
       needle: stateNeedle,
@@ -695,46 +946,55 @@ function applyLocalEnvironmentActionModalDraftPatch(currentSource) {
       description: "draft state insertion point",
     },
     {
-      needle: "if(t[0]!==n||",
-      replacement: "if(t[0]!==codexLinuxActionDraft||t[0]!==n||",
+      needle: `if(${cacheVar}[0]!==${actionVar}||`,
+      replacement: `if(${cacheVar}[0]!==codexLinuxActionDraft||${cacheVar}[0]!==${actionVar}||`,
       description: "modal memo guard",
     },
     {
-      needle: "{...n,command:I,name:P}",
-      replacement: "{...codexLinuxActionDraft,command:I,name:P}",
-      description: "saved action payload",
-    },
-    {
-      needle: "n.icon",
+      needle: `${actionVar}.icon`,
       replacement: "codexLinuxActionDraft.icon",
       description: "icon draft references",
     },
     {
-      needle: "n.name",
+      needle: `${actionVar}.name`,
       replacement: "codexLinuxActionDraft.name",
       description: "name draft references",
     },
     {
-      needle: "n.command",
+      needle: `${actionVar}.command`,
       replacement: "codexLinuxActionDraft.command",
       description: "command draft references",
     },
     {
-      needle: "l({icon:e.value})",
+      needle: `${updateVar}({icon:e.value})`,
       replacement: "codexLinuxUpdateActionDraft({icon:e.value})",
       description: "icon update callback",
     },
     {
-      needle: "l({name:e.target.value})",
+      needle: `${updateVar}({name:e.target.value})`,
       replacement: "codexLinuxUpdateActionDraft({name:e.target.value})",
       description: "name update callback",
     },
     {
-      needle: "l({command:e})",
+      needle: `${updateVar}({command:e})`,
       replacement: "codexLinuxUpdateActionDraft({command:e})",
       description: "command update callback",
     },
   ];
+
+  const savedPayloadPattern = new RegExp(
+    String.raw`\{\.\.\.${actionVar},command:([A-Za-z_$][\w$]*),name:([A-Za-z_$][\w$]*)\}`,
+  );
+  if (!savedPayloadPattern.test(patchedFunction)) {
+    console.warn(
+      "WARN: Could not find local environment action modal saved action payload — skipping action input patch",
+    );
+    return currentSource;
+  }
+  patchedFunction = patchedFunction.replace(
+    savedPayloadPattern,
+    "{...codexLinuxActionDraft,command:$1,name:$2}",
+  );
 
   const missingReplacement = requiredReplacements.find(
     ({ needle }) => !patchedFunction.includes(needle),
@@ -842,6 +1102,10 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
       "Je=(We?N?.kind===`comment`?me:[]:qe==null?me:me.filter(e=>e.id!==qe.id)).flatMap";
     const latestCommentPreloadMarkersPatch =
       "Je=(We?N?.kind===`comment`?Ue:[]:qe==null?me:me.filter(e=>e.id!==qe.id)).flatMap";
+    const currentCommentPreloadSelectedMarkersNeedle =
+      "Ye=(Ge?M?.kind===`comment`?he:[]:Je==null?he:he.filter(e=>e.id!==Je.id)).flatMap";
+    const currentCommentPreloadSelectedMarkersPatch =
+      "Ye=(Ge?M?.kind===`comment`?We:[]:Je==null?he:he.filter(e=>e.id!==Je.id)).flatMap";
     if (patchedSource.includes(currentMarkersPatch)) {
       // Already patched.
     } else if (patchedSource.includes(currentSelectedMarkersPatch)) {
@@ -849,6 +1113,8 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
     } else if (patchedSource.includes(currentCommentPreloadMarkersPatch)) {
       // Already patched.
     } else if (patchedSource.includes(latestCommentPreloadMarkersPatch)) {
+      // Already patched.
+    } else if (patchedSource.includes(currentCommentPreloadSelectedMarkersPatch)) {
       // Already patched.
     } else if (patchedSource.includes(currentMarkersNeedle)) {
       patchedSource = patchedSource.replace(currentMarkersNeedle, currentMarkersPatch);
@@ -863,6 +1129,11 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
       patchedSource = patchedSource.replace(
         latestCommentPreloadMarkersNeedle,
         latestCommentPreloadMarkersPatch,
+      );
+    } else if (patchedSource.includes(currentCommentPreloadSelectedMarkersNeedle)) {
+      patchedSource = patchedSource.replace(
+        currentCommentPreloadSelectedMarkersNeedle,
+        currentCommentPreloadSelectedMarkersPatch,
       );
     } else {
       console.warn("WARN: Could not find browser annotation screenshot markers — skipping screenshot marker patch");
@@ -938,21 +1209,106 @@ function detectComposerFooterConversationIdVar(source, footerNeedles) {
 }
 
 function detectLatestComposerFooterControls(source) {
-  const controlsRegex =
-    /function ([A-Za-z_$][\w$]*)\(e\)\{[\s\S]{0,9000}?conversationId:([A-Za-z_$][\w$]*)[\s\S]{0,9000}?FooterInlineControls,\{gap:`normal`,children:\[([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\]\}/;
-  const match = source.match(controlsRegex);
-  if (match == null) {
+  const candidates = [];
+  for (const match of source.matchAll(
+    /FooterInlineControls,\{gap:`normal`,children:\[([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\]\}/g,
+  )) {
+    candidates.push({
+      index: match.index,
+      firstChildVar: match[1],
+      secondChildVar: match[2],
+      conversationIdVar: null,
+    });
+  }
+  for (const match of source.matchAll(
+    /FooterInlineControls,\{gap:`normal`,children:\[([A-Za-z_$][\w$]*),\(0,Q\.jsx\)\(codexLinuxRateLimitFooter,\{conversationId:([A-Za-z_$][\w$]*)\}\),([A-Za-z_$][\w$]*)\]\}/g,
+  )) {
+    candidates.push({
+      index: match.index,
+      firstChildVar: match[1],
+      secondChildVar: match[3],
+      conversationIdVar: match[2],
+    });
+  }
+  for (const match of source.matchAll(
+    /FooterInlineControls,\{gap:`normal`,children:\[([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)==null\?null:\(0,Q\.jsx\)\(codexLinuxRateLimitFooter,\{conversationId:\2\}\),([A-Za-z_$][\w$]*)\]\}/g,
+  )) {
+    candidates.push({
+      index: match.index,
+      firstChildVar: match[1],
+      secondChildVar: match[3],
+      conversationIdVar: match[2],
+    });
+  }
+  for (const match of source.matchAll(
+    /FooterInlineControls,\{gap:`normal`,children:\[([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),\(0,Q\.jsx\)\(codexLinuxRateLimitFooter,\{conversationId:([A-Za-z_$][\w$]*)\}\)\]\}/g,
+  )) {
+    candidates.push({
+      index: match.index,
+      firstChildVar: match[1],
+      secondChildVar: match[2],
+      conversationIdVar: match[3],
+    });
+  }
+
+  candidates.sort((left, right) => left.index - right.index);
+  for (const candidate of candidates) {
+    const functionStart = source.lastIndexOf("function ", candidate.index);
+    if (functionStart === -1) {
+      continue;
+    }
+    const functionHeader = source.slice(functionStart).match(/^function ([A-Za-z_$][\w$]*)\(e\)\{/);
+    if (functionHeader == null) {
+      continue;
+    }
+    const scopePrefix = source.slice(functionStart, candidate.index);
+    if (!scopePrefix.includes("addContextButton:")) {
+      continue;
+    }
+    const conversationIdVar =
+      candidate.conversationIdVar ??
+      scopePrefix.match(/conversationId:([A-Za-z_$][\w$]*)/)?.[1] ??
+      null;
+    if (conversationIdVar == null) {
+      continue;
+    }
+
+    const [, functionName] = functionHeader;
+    const { firstChildVar, secondChildVar } = candidate;
+    return {
+      insertionNeedle: `function ${functionName}(e){`,
+      conversationIdVar,
+      footerControlsNeedle:
+        `FooterInlineControls,{gap:\`normal\`,children:[${firstChildVar},${secondChildVar}]}`,
+      footerControlsPatch:
+        `FooterInlineControls,{gap:\`normal\`,children:[${firstChildVar},(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:${conversationIdVar}}),${secondChildVar}]}`,
+      footerControlsAfterPermissionsPatch:
+        `FooterInlineControls,{gap:\`normal\`,children:[${firstChildVar},${secondChildVar},(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:${conversationIdVar}})]}`,
+    };
+  }
+
+  return null;
+}
+
+function detectLatestComposerRateLimitQuery(source) {
+  const queryMatches = Array.from(
+    source.matchAll(
+      /\{data:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)[\s\S]{0,1800}?rateLimitStatus:\1/g,
+    ),
+  );
+  if (queryMatches.length === 0) {
     return null;
   }
-  const [, functionName, conversationIdVar, firstChildVar, secondChildVar] = match;
-  return {
-    insertionNeedle: `function ${functionName}(e){`,
-    conversationIdVar,
-    footerControlsNeedle:
-      `FooterInlineControls,{gap:\`normal\`,children:[${firstChildVar},${secondChildVar}]}`,
-    footerControlsPatch:
-      `FooterInlineControls,{gap:\`normal\`,children:[${firstChildVar},${conversationIdVar}==null?null:(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:${conversationIdVar}}),${secondChildVar}]}`,
-  };
+
+  const [, , queryHook, queryKey] = queryMatches[queryMatches.length - 1];
+  return { queryHook, queryKey };
+}
+
+function removeBroadFooterInlineControlsRateLimitPatch(source) {
+  return source.replace(
+    /let ([A-Za-z_$][\w$]*);return \1=\(0,([A-Za-z_$][\w$]*)\.jsxs\)\(`div`,\{ref:([A-Za-z_$][\w$]*),className:([A-Za-z_$][\w$]*),children:\[([A-Za-z_$][\w$]*),\(0,\2\.jsx\)\(codexLinuxRateLimitFooter,\{conversationId:null\}\)\]\}\),\1\}/g,
+    "let $1;return $1=(0,$2.jsx)(`div`,{ref:$3,className:$4,children:$5}),$1}",
+  );
 }
 
 function detectCurrentPermissionsRateLimitFooterSymbols(source) {
@@ -986,15 +1342,47 @@ function detectCurrentPermissionsRateLimitFooterSymbols(source) {
   };
 }
 
+function replaceCodexLinuxRateLimitFooterFunction(source, replacement) {
+  const functionStart = source.indexOf("function codexLinuxRateLimitFooter(");
+  if (functionStart === -1) {
+    return source;
+  }
+
+  const headerMatch = source
+    .slice(functionStart)
+    .match(/^function codexLinuxRateLimitFooter\([^)]*\)\{/);
+  if (headerMatch == null) {
+    return source;
+  }
+  const openBrace = functionStart + headerMatch[0].length - 1;
+
+  const closeBrace = findMatchingBrace(source, openBrace);
+  if (closeBrace === -1) {
+    return source;
+  }
+
+  const existingFunction = source.slice(functionStart, closeBrace + 1);
+  if (existingFunction === replacement) {
+    return source;
+  }
+
+  return source.slice(0, functionStart) + replacement + source.slice(closeBrace + 1);
+}
+
 function applyPersistentRateLimitFooterPatch(currentSource) {
   let patchedSource = currentSource;
   const currentSymbols = detectCurrentRateLimitFooterSymbols(currentSource);
   const latestFooterControls = detectLatestComposerFooterControls(currentSource);
+  const latestRateLimitQuery = detectLatestComposerRateLimitQuery(currentSource) ?? {
+    queryHook: "f",
+    queryKey: "Ae",
+  };
   const currentPermissionsFooterSymbols = detectCurrentPermissionsRateLimitFooterSymbols(currentSource);
+  const footerLabelClass = "composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-transparent px-2 py-1 text-xs text-token-text-secondary dark:border-white/10";
   const currentComposerStatusNeedle =
     "function zg(e){";
   const currentComposerFooterFunction =
-    "function codexLinuxRateLimitFooter({conversationId:e,rateLimit:t}){try{let n=Et(),{activeMode:r}=or(e),i=r?.settings.model??null,a=sa(t),o=ta(t),s=da(a,{activeLimitName:o,selectedModel:i}),c=s.filter(kg).slice(0,2);c.length===0&&(c=da(a,{activeLimitName:o,selectedModel:null}).filter(kg).slice(0,2));if(c.length===0)return null;let l=c.map(e=>`${bg(e.bucket.windowDurationMins??null,n,{withColon:!1})} ${n.formatNumber(Yi(e.bucket.usedPercent??0),{maximumFractionDigits:0})}%`).join(` / `);return(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:l})}catch(e){return null}}";
+    `function codexLinuxRateLimitFooter({conversationId:e,rateLimit:t}){try{let n=Et(),{activeMode:r}=or(e),i=r?.settings.model??null,a=sa(t),o=ta(t),s=da(a,{activeLimitName:o,selectedModel:i}),c=s.filter(kg).slice(0,2);c.length===0&&(c=da(a,{activeLimitName:o,selectedModel:null}).filter(kg).slice(0,2));if(c.length===0)return null;let l=c.map(e=>\`\${bg(e.bucket.windowDurationMins??null,n,{withColon:!1})} \${n.formatNumber(Yi(e.bucket.usedPercent??0),{maximumFractionDigits:0})}%\`).join(\` / \`);return(0,Q.jsx)(\`span\`,{className:\`${footerLabelClass}\`,children:l})}catch(e){return null}}`;
   const currentComposerFooterCallNeedle =
     "children:[ue,de,W,fe,pe,me,G,he,_e,ve,ye,xe,Se,Ce,we,Te,Ee,Oe,Ae,je,Me]";
   const currentComposerFooterCallPatch =
@@ -1032,19 +1420,33 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
     : `(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:${homeFooterConversationIdVar}})`;
 
   const legacyFooterFunction =
-    "function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,Z.c)(22),n=ea(),{modelSettings:r}=Bi(e),i=r.model??null,{data:a=null}=li(Fn),o=Ro(a),s=Zo(a),c=Xo(Jo(o,{activeLimitName:s,selectedModel:i})).slice(0,2);c.length===0&&(c=Xo(Jo(o,{activeLimitName:s,selectedModel:null})).slice(0,2));if(c.length===0)return null;let l;t[0]!==n?(l=(0,Q.jsx)(X,{id:`composer.linuxRateLimitFooter.tooltip`,defaultMessage:`Rate limits remaining`,description:`Tooltip for compact footer rate limit status`}),t[0]=n,t[1]=l):l=t[1];let u;if(t[2]!==c){u=c.map((e,t)=>{let n=No(e.bucket.usedPercent??0);return(0,Q.jsxs)(`span`,{className:`flex items-center gap-1 whitespace-nowrap`,children:[t>0?(0,Q.jsx)(`span`,{className:`text-token-input-placeholder-foreground`,children:`/`}):null,(0,Q.jsx)(`span`,{children:(0,Q.jsx)(V_,{minutes:e.bucket.windowDurationMins,variant:`summary`})}),(0,Q.jsx)(`span`,{className:`font-medium text-token-text-primary`,children:Do(n)})]},e.key)}),t[2]=c,t[3]=u}else u=t[3];let d;t[4]!==u?(d=(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:u}),t[4]=u,t[5]=d):d=t[5];let f;return t[6]!==l||t[7]!==d?(f=(0,Q.jsx)(nc,{tooltipContent:l,children:d}),t[6]=l,t[7]=d,t[8]=f):f=t[8],f}catch(e){return null}}";
+    `function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,Z.c)(22),n=ea(),{modelSettings:r}=Bi(e),i=r.model??null,{data:a=null}=li(Fn),o=Ro(a),s=Zo(a),c=Xo(Jo(o,{activeLimitName:s,selectedModel:i})).slice(0,2);c.length===0&&(c=Xo(Jo(o,{activeLimitName:s,selectedModel:null})).slice(0,2));if(c.length===0)return null;let l;t[0]!==n?(l=(0,Q.jsx)(X,{id:\`composer.linuxRateLimitFooter.tooltip\`,defaultMessage:\`Rate limits remaining\`,description:\`Tooltip for compact footer rate limit status\`}),t[0]=n,t[1]=l):l=t[1];let u;if(t[2]!==c){u=c.map((e,t)=>{let n=No(e.bucket.usedPercent??0);return(0,Q.jsxs)(\`span\`,{className:\`flex items-center gap-1 whitespace-nowrap\`,children:[t>0?(0,Q.jsx)(\`span\`,{className:\`text-token-input-placeholder-foreground\`,children:\`/\`}):null,(0,Q.jsx)(\`span\`,{children:(0,Q.jsx)(V_,{minutes:e.bucket.windowDurationMins,variant:\`summary\`})}),(0,Q.jsx)(\`span\`,{className:\`font-medium text-token-text-primary\`,children:Do(n)})]},e.key)}),t[2]=c,t[3]=u}else u=t[3];let d;t[4]!==u?(d=(0,Q.jsx)(\`span\`,{className:\`${footerLabelClass}\`,children:u}),t[4]=u,t[5]=d):d=t[5];let f;return t[6]!==l||t[7]!==d?(f=(0,Q.jsx)(nc,{tooltipContent:l,children:d}),t[6]=l,t[7]=d,t[8]=f):f=t[8],f}catch(e){return null}}`;
   const currentFooterFunction = currentSymbols == null
     ? null
-    : `function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,Z.c)(22),{activeMode:n}=Bi(e),r=n?.settings.model??null,{data:i}=ci(${currentSymbols.accountSignalVar}),a=i===void 0?null:i,o=Ro(a),s=Zo(a),c=Xo(Jo(o,{activeLimitName:s,selectedModel:r})).slice(0,2);c.length===0&&(c=Xo(Jo(o,{activeLimitName:s,selectedModel:null})).slice(0,2));if(c.length===0)return null;let l;t[0]===Symbol.for(\`react.memo_cache_sentinel\`)?(l=(0,Q.jsx)(X,{id:\`composer.linuxRateLimitFooter.tooltip\`,defaultMessage:\`Rate limits remaining\`,description:\`Tooltip for compact footer rate limit status\`}),t[0]=l):l=t[0];let u;if(t[1]!==c){u=c.map((e,t)=>{let n=No(e.bucket.usedPercent??0);return(0,Q.jsxs)(\`span\`,{className:\`flex items-center gap-1 whitespace-nowrap\`,children:[t>0?(0,Q.jsx)(\`span\`,{className:\`text-token-input-placeholder-foreground\`,children:\`/\`}):null,(0,Q.jsx)(\`span\`,{children:(0,Q.jsx)(${currentSymbols.durationComponent},{minutes:e.bucket.windowDurationMins,variant:\`summary\`})}),(0,Q.jsx)(\`span\`,{className:\`font-medium text-token-text-primary\`,children:Do(n)})]},e.key)}),t[1]=c,t[2]=u}else u=t[2];let d;t[3]!==u?(d=(0,Q.jsx)(\`span\`,{className:\`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10\`,children:u}),t[3]=u,t[4]=d):d=t[4];let f;return t[5]!==l||t[6]!==d?(f=(0,Q.jsx)(nc,{tooltipContent:l,children:d}),t[5]=l,t[6]=d,t[7]=f):f=t[7],f}catch(e){return null}}`;
+    : `function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,Z.c)(22),{activeMode:n}=Bi(e),r=n?.settings.model??null,{data:i}=ci(${currentSymbols.accountSignalVar}),a=i===void 0?null:i,o=Ro(a),s=Zo(a),c=Xo(Jo(o,{activeLimitName:s,selectedModel:r})).slice(0,2);c.length===0&&(c=Xo(Jo(o,{activeLimitName:s,selectedModel:null})).slice(0,2));if(c.length===0)return null;let l;t[0]===Symbol.for(\`react.memo_cache_sentinel\`)?(l=(0,Q.jsx)(X,{id:\`composer.linuxRateLimitFooter.tooltip\`,defaultMessage:\`Rate limits remaining\`,description:\`Tooltip for compact footer rate limit status\`}),t[0]=l):l=t[0];let u;if(t[1]!==c){u=c.map((e,t)=>{let n=No(e.bucket.usedPercent??0);return(0,Q.jsxs)(\`span\`,{className:\`flex items-center gap-1 whitespace-nowrap\`,children:[t>0?(0,Q.jsx)(\`span\`,{className:\`text-token-input-placeholder-foreground\`,children:\`/\`}):null,(0,Q.jsx)(\`span\`,{children:(0,Q.jsx)(${currentSymbols.durationComponent},{minutes:e.bucket.windowDurationMins,variant:\`summary\`})}),(0,Q.jsx)(\`span\`,{className:\`font-medium text-token-text-primary\`,children:Do(n)})]},e.key)}),t[1]=c,t[2]=u}else u=t[2];let d;t[3]!==u?(d=(0,Q.jsx)(\`span\`,{className:\`${footerLabelClass}\`,children:u}),t[3]=u,t[4]=d):d=t[4];let f;return t[5]!==l||t[6]!==d?(f=(0,Q.jsx)(nc,{tooltipContent:l,children:d}),t[5]=l,t[6]=d,t[7]=f):f=t[7],f}catch(e){return null}}`;
   const latestFooterFunction =
+    `function codexLinuxRateLimitFooter(){try{let e=(0,$.c)(6),t=${latestRateLimitQuery.queryHook}(${latestRateLimitQuery.queryKey})?.data,n=t?.rate_limit,r=[n?.primary_window,n?.secondary_window].filter(e=>e!=null&&Number.isFinite(e.used_percent)).slice(0,2);if(r.length===0)return null;let i;if(e[0]!==r){i=r.map(e=>{let t=e.limit_window_seconds==null?null:e.limit_window_seconds/60,n=t==null?\`Rate\`:t>=1440?\`\${Math.ceil(t/1440)}d\`:t>=60?\`\${Math.ceil(t/60)}h\`:\`\${Math.ceil(t)}m\`,r=Math.max(0,100-(e.used_percent??0));return\`\${n} \${Math.round(r)}%\`}).join(\` / \`),e[0]=r,e[1]=i}else i=e[1];let a;return e[2]!==i?(a=(0,Q.jsx)(\`span\`,{className:\`${footerLabelClass}\`,children:i}),e[2]=i,e[3]=a):a=e[3],a}catch(e){return null}}`;
+  const previousLatestFooterFunctionWithVisibleFallback =
+    "function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,$.c)(8),{activeMode:n}=or(e),r=n?.settings.model??null,{data:i}=St(ue),a=ma(i),o=la(i),s=da(a,{activeLimitName:o,selectedModel:r}).filter(og).slice(0,2);s.length===0&&(s=da(a,{activeLimitName:o,selectedModel:null}).filter(og).slice(0,2));if(s.length===0)return(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:`Usage limits`});let c=ht(),l;if(t[0]!==s||t[1]!==c){l=s.map(e=>`${Xh(e.bucket.windowDurationMins??null,c)} ${c.formatNumber(Sa(e.bucket.usedPercent??0),{maximumFractionDigits:0})}%`).join(` / `),t[0]=s,t[1]=c,t[2]=l}else l=t[2];let u;return t[3]!==l?(u=(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:l}),t[3]=l,t[4]=u):u=t[4],u}catch(e){return null}}";
+  const previousLatestFooterFunctionWithVisibleCatchFallback =
+    "function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,$.c)(8),{activeMode:n}=or(e),r=n?.settings.model??null,{data:i}=St(ue),a=ma(i),o=la(i),s=da(a,{activeLimitName:o,selectedModel:r}).filter(og).slice(0,2);s.length===0&&(s=da(a,{activeLimitName:o,selectedModel:null}).filter(og).slice(0,2));if(s.length===0)return(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:`Usage limits`});let c=ht(),l;if(t[0]!==s||t[1]!==c){l=s.map(e=>`${Xh(e.bucket.windowDurationMins??null,c)} ${c.formatNumber(Sa(e.bucket.usedPercent??0),{maximumFractionDigits:0})}%`).join(` / `),t[0]=s,t[1]=c,t[2]=l}else l=t[2];let u;return t[3]!==l?(u=(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:l}),t[3]=l,t[4]=u):u=t[4],u}catch(e){return(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:`Usage limits`})}}";
+  const previousLatestFooterFunctionWithModelFallback =
+    "function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,$.c)(8),{activeMode:n}=or(e),r=n?.settings.model??null,{data:i}=St(ue),a=ma(i),o=la(i),s=da(a,{activeLimitName:o,selectedModel:r}).filter(og).slice(0,2);s.length===0&&(s=da(a,{activeLimitName:o,selectedModel:null}).filter(og).slice(0,2));if(s.length===0)return null;let c=ht(),l;if(t[0]!==s||t[1]!==c){l=s.map(e=>`${Xh(e.bucket.windowDurationMins??null,c)} ${c.formatNumber(Sa(e.bucket.usedPercent??0),{maximumFractionDigits:0})}%`).join(` / `),t[0]=s,t[1]=c,t[2]=l}else l=t[2];let u;return t[3]!==l?(u=(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:l}),t[3]=l,t[4]=u):u=t[4],u}catch(e){return null}}";
+  const previousLatestFooterFunction =
     "function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,$.c)(8),{activeMode:n}=or(e),r=n?.settings.model??null,{data:i}=St(ue),a=ma(i),o=la(i),s=da(a,{activeLimitName:o,selectedModel:r}).filter(og).slice(0,2);if(s.length===0)return null;let c=ht(),l;if(t[0]!==s||t[1]!==c){l=s.map(e=>`${Xh(e.bucket.windowDurationMins??null,c)} ${c.formatNumber(Sa(e.bucket.usedPercent??0),{maximumFractionDigits:0})}%`).join(` / `),t[0]=s,t[1]=c,t[2]=l}else l=t[2];let u;return t[3]!==l?(u=(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:l}),t[3]=l,t[4]=u):u=t[4],u}catch(e){return null}}";
   const currentPermissionsFooterFunction = currentPermissionsFooterSymbols == null
     ? null
-    : `function codexLinuxRateLimitFooter({conversationId:e}){try{let t=${currentPermissionsFooterSymbols.activeModeHook}(e)?.activeMode?.settings.model??null,{data:n}=${currentPermissionsFooterSymbols.queryHook}(${currentPermissionsFooterSymbols.queryKey}),r=${currentPermissionsFooterSymbols.entriesFn}(n),i=${currentPermissionsFooterSymbols.activeLimitFn}(n),a=${currentPermissionsFooterSymbols.summaryFn}(r,{activeLimitName:i,selectedModel:t});if(a==null)return null;let o=[];if(a.windowMinutes!=null){let e=a.windowMinutes;o.push(e>=1440?\`\${Math.ceil(e/1440)}d\`:e>=60?\`\${Math.ceil(e/60)}h\`:\`\${Math.ceil(e)}m\`)}a.remainingPercent!=null&&o.push(\`\${Math.round(a.remainingPercent)}%\`);if(o.length===0)return null;return(0,${currentPermissionsFooterSymbols.jsxAlias}.jsx)(\`span\`,{className:\`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10\`,children:o.join(\` \`)})}catch(e){return null}}`;
+    : `function codexLinuxRateLimitFooter({conversationId:e}){try{let t=${currentPermissionsFooterSymbols.activeModeHook}(e)?.activeMode?.settings.model??null,{data:n}=${currentPermissionsFooterSymbols.queryHook}(${currentPermissionsFooterSymbols.queryKey}),r=${currentPermissionsFooterSymbols.entriesFn}(n),i=${currentPermissionsFooterSymbols.activeLimitFn}(n),a=${currentPermissionsFooterSymbols.summaryFn}(r,{activeLimitName:i,selectedModel:t});if(a==null)return null;let o=[];if(a.windowMinutes!=null){let e=a.windowMinutes;o.push(e>=1440?\`\${Math.ceil(e/1440)}d\`:e>=60?\`\${Math.ceil(e/60)}h\`:\`\${Math.ceil(e)}m\`)}a.remainingPercent!=null&&o.push(\`\${Math.round(a.remainingPercent)}%\`);if(o.length===0)return null;return(0,${currentPermissionsFooterSymbols.jsxAlias}.jsx)(\`span\`,{className:\`${footerLabelClass}\`,children:o.join(\` \`)})}catch(e){return null}}`;
 
   if (!patchedSource.includes("function codexLinuxRateLimitFooter(")) {
     const legacyInsertionNeedle = "function TF(e){";
-    if (latestFooterControls != null) {
+    if (currentPermissionsFooterSymbols != null && currentPermissionsFooterFunction != null) {
+      patchedSource = patchedSource.replace(
+        currentPermissionsFooterSymbols.insertionNeedle,
+        `${currentPermissionsFooterFunction}${currentPermissionsFooterSymbols.insertionNeedle}`,
+      );
+    } else if (latestFooterControls != null) {
+      recordStrategy("rate-limit-footer", "upstream-latest");
       patchedSource = patchedSource.replace(
         latestFooterControls.insertionNeedle,
         `${latestFooterFunction}${latestFooterControls.insertionNeedle}`,
@@ -1053,11 +1455,6 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
       patchedSource = patchedSource.replace(
         currentSymbols.insertionNeedle,
         `${currentFooterFunction}${currentSymbols.insertionNeedle}`,
-      );
-    } else if (currentPermissionsFooterSymbols != null && currentPermissionsFooterFunction != null) {
-      patchedSource = patchedSource.replace(
-        currentPermissionsFooterSymbols.insertionNeedle,
-        `${currentPermissionsFooterFunction}${currentPermissionsFooterSymbols.insertionNeedle}`,
       );
     } else if (patchedSource.includes(currentComposerStatusNeedle)) {
       patchedSource = patchedSource.replace(
@@ -1070,39 +1467,82 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
         `${legacyFooterFunction}${legacyInsertionNeedle}`,
       );
     }
+  } else if (currentPermissionsFooterSymbols != null && currentPermissionsFooterFunction != null) {
+    patchedSource = replaceCodexLinuxRateLimitFooterFunction(
+      patchedSource,
+      currentPermissionsFooterFunction,
+    );
   } else if (currentSymbols != null && currentFooterFunction != null) {
-    const functionStart = patchedSource.indexOf("function codexLinuxRateLimitFooter(");
-    const functionEnd = patchedSource.indexOf(currentSymbols.insertionNeedle, functionStart);
-    if (functionEnd !== -1) {
-      const existingFooterFunction = patchedSource.slice(functionStart, functionEnd);
-      if (existingFooterFunction !== currentFooterFunction) {
-        patchedSource =
-          patchedSource.slice(0, functionStart) +
-          currentFooterFunction +
-          patchedSource.slice(functionEnd);
-      }
-    }
+    patchedSource = replaceCodexLinuxRateLimitFooterFunction(
+      patchedSource,
+      currentFooterFunction,
+    );
+  } else if (currentSource.includes(currentComposerStatusNeedle)) {
+    patchedSource = replaceCodexLinuxRateLimitFooterFunction(
+      patchedSource,
+      currentComposerFooterFunction,
+    );
+  } else if (latestFooterControls != null) {
+    patchedSource = replaceCodexLinuxRateLimitFooterFunction(
+      patchedSource,
+      latestFooterFunction,
+    );
   } else {
-    const legacyInsertionNeedle = "function TF(e){";
-    const functionStart = patchedSource.indexOf("function codexLinuxRateLimitFooter(");
-    const functionEnd = patchedSource.indexOf(legacyInsertionNeedle, functionStart);
-    if (functionStart !== -1 && functionEnd !== -1) {
-      const existingFooterFunction = patchedSource.slice(functionStart, functionEnd);
-      if (existingFooterFunction !== legacyFooterFunction) {
-        patchedSource =
-          patchedSource.slice(0, functionStart) +
-          legacyFooterFunction +
-          patchedSource.slice(functionEnd);
-      }
-    }
+    patchedSource = replaceCodexLinuxRateLimitFooterFunction(
+      patchedSource,
+      legacyFooterFunction,
+    );
   }
 
   const hasFooterFunction = patchedSource.includes("function codexLinuxRateLimitFooter(");
   if (!hasFooterFunction) {
+    if (currentSource.includes("FooterInlineControls")) {
+      // Composer-shaped bundle, but the footer controls drifted from the
+      // supported upstream shape.
+      recordStrategy("rate-limit-footer", "none");
+      console.warn("WARN: Could not insert persistent rate limit footer helper — skipping composer footer limit patch");
+      return currentSource;
+    }
     if (shouldWarnAboutMissingFooterHelper) {
       console.warn("WARN: Could not insert persistent rate limit footer helper — skipping composer footer limit patch");
+      return currentSource;
     }
     return currentSource;
+  }
+
+  if (patchedSource.includes(previousLatestFooterFunction)) {
+    patchedSource = patchedSource.replace(previousLatestFooterFunction, latestFooterFunction);
+  }
+  if (patchedSource.includes(previousLatestFooterFunctionWithModelFallback)) {
+    patchedSource = patchedSource.replace(previousLatestFooterFunctionWithModelFallback, latestFooterFunction);
+  }
+  if (patchedSource.includes(previousLatestFooterFunctionWithVisibleFallback)) {
+    patchedSource = patchedSource.replace(previousLatestFooterFunctionWithVisibleFallback, latestFooterFunction);
+  }
+  if (patchedSource.includes(previousLatestFooterFunctionWithVisibleCatchFallback)) {
+    patchedSource = patchedSource.replace(previousLatestFooterFunctionWithVisibleCatchFallback, latestFooterFunction);
+  }
+
+  patchedSource = removeBroadFooterInlineControlsRateLimitPatch(patchedSource);
+
+  patchedSource = patchedSource.replace(
+    /([A-Za-z_$][\w$]*)==null\?null:\(0,Q\.jsx\)\(codexLinuxRateLimitFooter,\{conversationId:\1\}\)/g,
+    "(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:$1})",
+  );
+
+  patchedSource = patchedSource.replace(
+    /FooterInlineControls,\{gap:`normal`,children:\[([A-Za-z_$][\w$]*),\(0,Q\.jsx\)\(codexLinuxRateLimitFooter,\{conversationId:([A-Za-z_$][\w$]*)\}\),([A-Za-z_$][\w$]*)\]\}/g,
+    "FooterInlineControls,{gap:`normal`,children:[$1,$3,(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:$2})]}",
+  );
+
+  if (
+    latestFooterControls != null &&
+    patchedSource.includes(latestFooterControls.footerControlsPatch)
+  ) {
+    patchedSource = patchedSource.replace(
+      latestFooterControls.footerControlsPatch,
+      latestFooterControls.footerControlsAfterPermissionsPatch,
+    );
   }
 
   if (
@@ -1112,7 +1552,7 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
   ) {
     patchedSource = patchedSource.replace(
       latestFooterControls.footerControlsNeedle,
-      latestFooterControls.footerControlsPatch,
+      latestFooterControls.footerControlsAfterPermissionsPatch,
     );
   }
 
@@ -1168,14 +1608,14 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
   const permissionsControlsNeedle =
     "(0,Q.jsx)(nz,{conversationId:f,hostId:C,cwdOverride:w}),(0,Q.jsx)(vz,{conversationId:f,hasGoal:y,isGoalActionAvailable:b,onClearGoal:x,showDivider:!0})";
   const permissionsControlsPatch =
-    "(0,Q.jsx)(nz,{conversationId:f,hostId:C,cwdOverride:w}),f==null?null:(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:f}),(0,Q.jsx)(vz,{conversationId:f,hasGoal:y,isGoalActionAvailable:b,onClearGoal:x,showDivider:!0})";
+    "(0,Q.jsx)(nz,{conversationId:f,hostId:C,cwdOverride:w}),(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:f}),(0,Q.jsx)(vz,{conversationId:f,hasGoal:y,isGoalActionAvailable:b,onClearGoal:x,showDivider:!0})";
   if (patchedSource.includes(permissionsControlsNeedle)) {
     patchedSource = patchedSource.replace(permissionsControlsNeedle, permissionsControlsPatch);
   }
   if (currentPermissionsControlsNeedle.test(patchedSource)) {
     patchedSource = patchedSource.replace(
       currentPermissionsControlsNeedle,
-      "(0,Q.jsx)($1,{conversationId:f,hostId:C,cwdOverride:w}),f==null?null:(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:f}),(0,Q.jsx)($2,{conversationId:f,hasGoal:y,isGoalActionAvailable:b,onClearGoal:x,showDivider:!0})",
+      "(0,Q.jsx)($1,{conversationId:f,hostId:C,cwdOverride:w}),(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:f}),(0,Q.jsx)($2,{conversationId:f,hasGoal:y,isGoalActionAvailable:b,onClearGoal:x,showDivider:!0})",
     );
   }
 
@@ -1239,7 +1679,9 @@ function patchCommentPreloadBundle(extractedDir) {
 
 module.exports = {
   applyBrowserAnnotationScreenshotPatch,
+  applyLinuxAppServerBackfillWaitPatch,
   applyLinuxAppServerFeatureEnablementPatch,
+  applyLinuxChatSearchHydrationPatch,
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
   applyLinuxBrowserUseNonLocalNavigationPatch,
