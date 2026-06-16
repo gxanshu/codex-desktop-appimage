@@ -3153,6 +3153,13 @@ PY
     [[ "$output" == *"<--ozone-platform=wayland>"* && "$output" == *"<--enable-features=WaylandWindowDecorations>"* ]] || fail "wayland-gpu profile must add Wayland launch args: $output"
     [[ "$output" == *"renderer_accessibility=0"* && "$output" != *"<--force-renderer-accessibility>"* ]] || fail "wayland-gpu profile must skip renderer accessibility by default: $output"
 
+    local portal_feature_args_dir="$TMP_DIR/portal-feature-electron-args"
+    mkdir -p "$portal_feature_args_dir"
+    printf '%s\n' '--enable-features=GlobalShortcutsPortal' '--enable-features=GlobalShortcutsPortal' > "$portal_feature_args_dir/appshots"
+    output="$(env -i PATH="$PATH" HOME="$HOME" FEATURE_ELECTRON_ARGS_DIR="$portal_feature_args_dir" CODEX_LINUX_RENDERING_MODE=wayland-gpu "$launcher_probe" probe)"
+    [[ "$output" == *"<--enable-features=GlobalShortcutsPortal,WaylandWindowDecorations>"* ]] || fail "feature and Wayland Electron feature flags must be merged: $output"
+    [[ "$output" != *"electron=<--enable-features=GlobalShortcutsPortal>"* ]] || fail "merged Electron feature flags must not remain in pass-through args: $output"
+
     output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wayland-gpu CODEX_FORCE_RENDERER_ACCESSIBILITY=1 "$launcher_probe" probe)"
     [[ "$output" == *"renderer_accessibility=1"* && "$output" == *"<--force-renderer-accessibility>"* ]] || fail "CODEX_FORCE_RENDERER_ACCESSIBILITY=1 must force renderer accessibility under wayland-gpu: $output"
 
