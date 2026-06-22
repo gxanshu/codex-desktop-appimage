@@ -3163,6 +3163,28 @@ mod tests {
     use crate::atspi_tree::{AccessibilityAction, Bounds};
     use crate::windows::{WindowBounds, GNOME_SHELL_EXTENSION_BACKEND};
 
+    struct EnvVarGuard {
+        key: &'static str,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
     fn node(index: u32, bounds: Option<Bounds>) -> AccessibilityNode {
         node_with_actions(index, bounds, Vec::new())
     }
@@ -4013,16 +4035,9 @@ mod tests {
 
     #[test]
     fn explicit_ydotool_socket_is_used_without_connectability_probe() {
-        let key = "YDOTOOL_SOCKET";
-        let original = std::env::var_os(key);
-        std::env::set_var(key, " /does/not/exist.sock ");
+        let _guard = EnvVarGuard::set("YDOTOOL_SOCKET", " /does/not/exist.sock ");
 
         let selected = explicit_ydotool_socket();
-
-        match original {
-            Some(value) => std::env::set_var(key, value),
-            None => std::env::remove_var(key),
-        }
 
         assert_eq!(selected.as_deref(), Some("/does/not/exist.sock"));
     }
