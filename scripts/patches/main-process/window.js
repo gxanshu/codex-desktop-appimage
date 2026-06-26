@@ -36,47 +36,63 @@ function ensureLinuxTitlebarOverlayHelper(source, anchorText, helperSource) {
 // Main-process patches adapt Electron shell behavior: windows, tray, menu,
 // single-instance handling, file manager integration, and packaged runtime glue.
 function applyLinuxWindowOptionsPatch(currentSource, iconAsset) {
-  if (iconAsset == null) {
-    return currentSource;
-  }
-
-  const iconPathExpression = `process.resourcesPath+\`/../content/webview/assets/${iconAsset}\``;
-  const iconPathNeedle = `icon:${iconPathExpression}`;
-  const setIconNeedle = `setIcon(${iconPathExpression})`;
-  const readyToShowSetIconInsertionPattern = /[A-Za-z_$][\w$]*\.once\(`ready-to-show`,\(\)=>\{/;
-
-  const windowOptionsNeedle = "...process.platform===`win32`?{autoHideMenuBar:!0}:{},";
-  const currentLinuxAutoHideMenuBarNeedle =
-    "...process.platform===`win32`||process.platform===`linux`?{autoHideMenuBar:!0}:{},";
-  const legacyLinuxSystemTitlebarNeedle =
-    `...process.platform===\`win32\`||process.platform===\`linux\`?{autoHideMenuBar:!0,...process.platform===\`linux\`?{${iconPathNeedle}}:{}}:{},`;
-  const windowOptionsReplacement =
-    `...process.platform===\`win32\`?{autoHideMenuBar:!0}:process.platform===\`linux\`?{${iconPathNeedle}}:{},`;
-
   let patchedSource = currentSource;
-  if (patchedSource.includes(legacyLinuxSystemTitlebarNeedle)) {
-    patchedSource = patchedSource.split(legacyLinuxSystemTitlebarNeedle).join(windowOptionsReplacement);
+
+  if (iconAsset != null) {
+    const iconPathExpression = `process.resourcesPath+\`/../content/webview/assets/${iconAsset}\``;
+    const iconPathNeedle = `icon:${iconPathExpression}`;
+    const setIconNeedle = `setIcon(${iconPathExpression})`;
+    const readyToShowSetIconInsertionPattern = /[A-Za-z_$][\w$]*\.once\(`ready-to-show`,\(\)=>\{/;
+
+    const windowOptionsNeedle = "...process.platform===`win32`?{autoHideMenuBar:!0}:{},";
+    const currentLinuxAutoHideMenuBarNeedle =
+      "...process.platform===`win32`||process.platform===`linux`?{autoHideMenuBar:!0}:{},";
+    const legacyLinuxSystemTitlebarNeedle =
+      `...process.platform===\`win32\`||process.platform===\`linux\`?{autoHideMenuBar:!0,...process.platform===\`linux\`?{${iconPathNeedle}}:{}}:{},`;
+    const windowOptionsReplacement =
+      `...process.platform===\`win32\`?{autoHideMenuBar:!0}:process.platform===\`linux\`?{${iconPathNeedle}}:{},`;
+
+    if (patchedSource.includes(legacyLinuxSystemTitlebarNeedle)) {
+      patchedSource = patchedSource.split(legacyLinuxSystemTitlebarNeedle).join(windowOptionsReplacement);
+    }
+
+    if (patchedSource.includes(windowOptionsNeedle)) {
+      patchedSource = patchedSource.split(windowOptionsNeedle).join(windowOptionsReplacement);
+    } else if (patchedSource.includes(currentLinuxAutoHideMenuBarNeedle)) {
+      patchedSource = patchedSource.split(currentLinuxAutoHideMenuBarNeedle).join(windowOptionsReplacement);
+    } else if (
+      patchedSource === currentSource &&
+      !patchedSource.includes(iconPathNeedle) &&
+      !patchedSource.includes(setIconNeedle) &&
+      !readyToShowSetIconInsertionPattern.test(patchedSource)
+    ) {
+      console.warn("WARN: Could not find BrowserWindow autoHideMenuBar snippet — skipping window options patch");
+    }
   }
 
-  if (patchedSource.includes(windowOptionsNeedle)) {
-    return patchedSource.split(windowOptionsNeedle).join(windowOptionsReplacement);
-  }
+  patchedSource = applyDefinedBrowserWindowOptionsPatch(patchedSource);
+  return patchedSource;
+}
 
-  if (patchedSource.includes(currentLinuxAutoHideMenuBarNeedle)) {
-    return patchedSource.split(currentLinuxAutoHideMenuBarNeedle).join(windowOptionsReplacement);
-  }
+function applyDefinedBrowserWindowOptionsPatch(currentSource) {
+  const browserWindowOptionsRegex =
+    /show:([A-Za-z_$][\w$]*),parent:([A-Za-z_$][\w$]*),focusable:([A-Za-z_$][\w$]*),(\.\.\.process\.platform===`win32`\?\{autoHideMenuBar:!0\}:process\.platform===`linux`\?\{icon:process\.resourcesPath\+`\/\.\.\/content\/webview\/assets\/[^`]+`\}:\{\},)backgroundMaterial:([A-Za-z_$][\w$]*)\?\?void 0,\.\.\.([A-Za-z_$][\w$]*),minWidth:([A-Za-z_$][\w$]*)\?\.width,minHeight:\7\?\.height,webPreferences:([A-Za-z_$][\w$]*)/g;
 
-  if (
-    patchedSource !== currentSource ||
-    patchedSource.includes(iconPathNeedle) ||
-    patchedSource.includes(setIconNeedle) ||
-    readyToShowSetIconInsertionPattern.test(patchedSource)
-  ) {
-    return patchedSource;
-  }
-
-  console.warn("WARN: Could not find BrowserWindow autoHideMenuBar snippet — skipping window options patch");
-  return currentSource;
+  return currentSource.replace(
+    browserWindowOptionsRegex,
+    (
+      _match,
+      showAlias,
+      parentAlias,
+      focusableAlias,
+      platformOptions,
+      backgroundMaterialAlias,
+      appearanceOptionsAlias,
+      minimumSizeAlias,
+      webPreferencesAlias,
+    ) =>
+      `show:${showAlias},...${parentAlias}==null?{}:{parent:${parentAlias}},...${focusableAlias}==null?{}:{focusable:${focusableAlias}},${platformOptions}...${backgroundMaterialAlias}==null?{}:{backgroundMaterial:${backgroundMaterialAlias}},...${appearanceOptionsAlias},...${minimumSizeAlias}==null?{}:{minWidth:${minimumSizeAlias}.width,minHeight:${minimumSizeAlias}.height},webPreferences:${webPreferencesAlias}`,
+  );
 }
 
 function applyLinuxNativeTitlebarPatch(currentSource) {
