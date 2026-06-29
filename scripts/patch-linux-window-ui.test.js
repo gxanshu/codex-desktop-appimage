@@ -2755,6 +2755,50 @@ test("forces Linux primary BrowserWindow to be focusable", () => {
   assert.doesNotMatch(patched, /show:l,parent:p,focusable:m/);
 });
 
+test("forces Linux primary BrowserWindow to be focusable for current boolean minified shape", () => {
+  const source = [
+    "async createWindow(e={}){let{title:n,width:i=1280,height:o=820,appearance:c=`primary`}=e,",
+    "M=new a.BrowserWindow({width:b,height:x,title:n??a.app.getName(),focusable:!1,",
+    "webPreferences:k});}",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxWindowOptionsPatch, source, null);
+
+  assert.match(
+    patched,
+    /focusable:process\.platform===`linux`&&c===`primary`\?!0:!1,webPreferences:k/,
+  );
+  assert.doesNotMatch(patched, /focusable:!1,webPreferences:k/);
+});
+
+test("keeps focusable destructuring valid while patching current boolean minified shape", () => {
+  const source = [
+    "async createWindow(e={}){let{title:n,width:i=1280,height:o=820,appearance:c=`primary`,",
+    "focusable:m}=e,M=new a.BrowserWindow({width:b,height:x,focusable:!1,",
+    "webPreferences:k});}",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxWindowOptionsPatch, source, null);
+
+  assert.match(patched, /appearance:c=`primary`,focusable:m\}=e/);
+  assert.match(
+    patched,
+    /new a\.BrowserWindow\(\{width:b,height:x,focusable:process\.platform===`linux`&&c===`primary`\?!0:!1,/,
+  );
+});
+
+test("fails loudly when primary BrowserWindow focusable shape cannot be patched", () => {
+  const source = [
+    "async createWindow(e={}){let{appearance:c=`primary`}=e,",
+    "M=new a.BrowserWindow({width:b,height:x,focusable:getFocusable(),webPreferences:k});}",
+  ].join("");
+
+  assert.throws(
+    () => applyLinuxWindowOptionsPatch(source, null),
+    /Could not patch primary BrowserWindow focusable option for Linux/,
+  );
+});
+
 test("patches remaining Linux window icon snippets when another window is already patched", () => {
   const iconAsset = "app-test.png";
   const iconPathExpression = "process.resourcesPath+`/../content/webview/assets/app-test.png`";

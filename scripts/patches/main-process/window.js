@@ -108,6 +108,12 @@ function findCreateWindowAppearanceAlias(currentSource, matchIndex) {
   return appearanceAlias;
 }
 
+function hasPrimaryBrowserWindowFocusableCandidate(currentSource) {
+  return /createWindow\([^)]*\)\{let\{[^}]*appearance:[A-Za-z_$][\w$]*(?:=`primary`)?[^}]*\}=[\s\S]{0,3500}?new\s+[A-Za-z_$][\w$]*\.BrowserWindow\(\{[\s\S]{0,2000}?focusable:/.test(
+    currentSource,
+  );
+}
+
 function applyLinuxPrimaryFocusablePatch(currentSource) {
   if (
     currentSource.includes("===`primary`?{focusable:!0}") ||
@@ -154,8 +160,30 @@ function applyLinuxPrimaryFocusablePatch(currentSource) {
     },
   );
 
-  if (!patchedAny && skippedAny && currentSource.includes("createWindow(")) {
-    console.warn("WARN: Could not derive primary BrowserWindow appearance alias — skipping Linux focusable patch");
+  const focusableCurrentShapeRegex =
+    /(new\s+[A-Za-z_$][\w$]*\.BrowserWindow\(\{(?:(?!\}\);)[\s\S]){0,2000}?focusable:)(!?[A-Za-z_$][\w$]*|![01]|null),/g;
+  patchedSource = patchedSource.replace(
+    focusableCurrentShapeRegex,
+    (match, browserWindowPrefix, focusableExpression, offset) => {
+      const appearanceAlias = findCreateWindowAppearanceAlias(currentSource, offset);
+      if (appearanceAlias == null) {
+        skippedAny = true;
+        return match;
+      }
+      patchedAny = true;
+      return (
+        `${browserWindowPrefix}process.platform===\`linux\`&&${appearanceAlias}===\`primary\`?!0:` +
+        `${focusableExpression},`
+      );
+    },
+  );
+
+  if (!patchedAny && skippedAny && hasPrimaryBrowserWindowFocusableCandidate(currentSource)) {
+    throw new Error("Could not derive primary BrowserWindow appearance alias for Linux focusable patch");
+  }
+
+  if (!patchedAny && hasPrimaryBrowserWindowFocusableCandidate(currentSource)) {
+    throw new Error("Could not patch primary BrowserWindow focusable option for Linux");
   }
 
   return patchedSource;
