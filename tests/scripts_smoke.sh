@@ -4819,7 +4819,7 @@ NODE
 }
 
 test_keybinds_settings_tab_patch_smoke() {
-    info "Checking Keybinds settings tab patch behavior"
+    info "Checking Linux desktop settings tab patch behavior"
     local workspace="$TMP_DIR/keybinds-settings-patch"
     local extracted="$workspace/extracted"
     local output_log="$workspace/output.log"
@@ -4828,135 +4828,45 @@ test_keybinds_settings_tab_patch_smoke() {
     make_fake_extracted_asar "$extracted" 'let D={removeMenu(){},setMenuBarVisibility(){},setIcon(){},once(){}};let t={join(){}};let a={existsSync(){return true},statSync(){return {isFile(){return false}}}};let n={shell:{openPath(){return ""},showItemInFolder(){}}};...process.platform===`win32`?{autoHideMenuBar:!0}:{},process.platform===`win32`&&D.removeMenu(),foo)}),D.once(`ready-to-show`,()=>{var sa=Mi({id:`fileManager`,label:`Finder`,icon:`apps/finder.png`,kind:`fileManager`,darwin:{detect:()=>`open`,args:e=>ai(e)},win32:{label:`File Explorer`,icon:`apps/file-explorer.png`,detect:ca,args:e=>ai(e),open:async({path:e})=>la(e)}});function ca(){let e=1;return e}async function la(e){let t=ua(e);if(t&&(0,a.statSync)(t).isFile()){n.shell.showItemInFolder(t);return}let r=t??e,i=await n.shell.openPath(r);if(i)throw Error(i)}function ua(e){return e}var Ua=Mi({id:`systemDefault`,label:`System Default App`,icon:`apps/file-explorer.png`,kind:`systemDefault`,hidden:!0,darwin:{icon:`apps/finder.png`,detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)},win32:{detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)},linux:{detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)}});async function Wa(e){return e}'
 
     cat > "$extracted/webview/assets/settings-sections-test.js" <<'JS'
-var e=`general-settings`,t=`mcp-settings`,n=[{slug:e},{slug:`appearance`},{slug:`git-settings`},{slug:`connections`},{slug:`local-environments`},{slug:`worktrees`},{slug:`agent`},{slug:`personalization`},{slug:`usage`},{slug:`browser-use`},{slug:`computer-use`},{slug:t},{slug:`plugins-settings`},{slug:`skills-settings`},{slug:`data-controls`}],r=t;export{n,t as r,e as t};
+var e=[`general-settings`,`profile`,`keyboard-shortcuts`,`account`],t=`general-settings`,n=function(){},r=[{slug:`general-settings`},{slug:`profile`},{slug:`appearance`},{slug:`keyboard-shortcuts`}];
 JS
     cat > "$extracted/webview/assets/settings-shared-test.js" <<'JS'
-import{t as d}from"./jsx-runtime-ebkFq_df.js";var c={"general-settings":{id:`settings.nav.general-settings`,defaultMessage:`General`,description:`Title for general settings section`},appearance:{id:`settings.nav.appearance`,defaultMessage:`Appearance`,description:`Title for appearance settings section`}};function m(e){let t=(0,u.c)(17),{slug:r}=e;switch(r){case`appearance`:{let e;return t[1]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(n,{id:`settings.section.appearance`,defaultMessage:`Appearance`,description:`Title for appearance settings section`}),t[1]=e):e=t[1],e}case`general-settings`:{let e;return t[2]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(n,{id:`settings.section.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}),t[2]=e):e=t[2],e}}}
+import{t as d}from"./jsx-runtime-test.js";var c={"general-settings":{id:`settings.nav.general-settings`,defaultMessage:`General`,description:`Title for general settings section`},"keyboard-shortcuts":{id:`settings.nav.keyboard-shortcuts`,defaultMessage:`Keyboard shortcuts`,description:`Title for keyboard shortcuts settings section`}};function m(e){let t=(0,u.c)(17),{slug:r}=e;switch(r){case`keyboard-shortcuts`:{let e;return t[1]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(n,{id:`settings.section.keyboard-shortcuts`,defaultMessage:`Keyboard shortcuts`,description:`Title for keyboard shortcuts settings section`}),t[1]=e):e=t[1],e}case`general-settings`:{let e;return t[2]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(n,{id:`settings.section.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}),t[2]=e):e=t[2],e}}}
 JS
     cat > "$extracted/webview/assets/index-test.js" <<'JS'
-var Xge={"general-settings":xh,appearance:Pf,agent:gU},H7={},Zge=[`general-settings`,`appearance`,`agent`,`personalization`,`mcp-settings`,`connections`,`git-settings`,`local-environments`,`worktrees`,`browser-use`,`computer-use`,`data-controls`],Qge=[{key:`app`,heading:H7.appHeading,slugs:[`general-settings`,`appearance`,`connections`,`git-settings`,`usage`]}];function n_e(){let l=`electron`,e=e=>{switch(e.slug){case`appearance`:case`git-settings`:case`worktrees`:case`local-environments`:case`data-controls`:case`environments`:return l===`electron`;case`account`:case`general-settings`:case`agent`:case`personalization`:case`mcp-settings`:return!0}};if(O)bb0:switch(D.slug){case`usage`:k=g;break bb0;case`appearance`:case`general-settings`:case`agent`:case`git-settings`:case`account`:case`data-controls`:case`personalization`:k=!1;break bb0;}}function s_e(e){let{slug:n}=e,r=c_e[n];return (0,$.jsx)(r,{})}var c_e={"general-settings":(0,Z.lazy)(()=>s(()=>import(`./general-settings-DZbwMmWz.js`).then(e=>({default:e.GeneralSettings})),__vite__mapDeps([4]),import.meta.url)),appearance:(0,Z.lazy)(()=>s(()=>import(`./appearance-settings-D4xYjo5o.js`).then(e=>({default:e.AppearanceSettings})),__vite__mapDeps([56]),import.meta.url)),agent:(0,Z.lazy)(()=>Promise.resolve({default:l_e}))};
+var Xge={"general-settings":xh,"keyboard-shortcuts":ks,appearance:Pf,agent:gU},H7={},Zge=[`general-settings`,`profile`,`keyboard-shortcuts`,`appearance`,`agent`,`personalization`,`mcp-settings`,`connections`,`git-settings`,`local-environments`,`worktrees`,`browser-use`,`computer-use`,`data-controls`],Qge=[{key:`app`,heading:H7.appHeading,slugs:[`general-settings`,`profile`,`keyboard-shortcuts`,`appearance`,`connections`,`git-settings`,`usage`]}];function n_e(){let l=`electron`,e=e=>{switch(e.slug){case`appearance`:case`git-settings`:case`worktrees`:case`local-environments`:case`data-controls`:case`environments`:return l===`electron`;case`account`:case`general-settings`:case`agent`:case`personalization`:case`keyboard-shortcuts`:case`mcp-settings`:return!0}};if(O)bb0:switch(D.slug){case`usage`:k=g;break bb0;case`appearance`:case`general-settings`:case`agent`:case`git-settings`:case`account`:case`data-controls`:case`personalization`:case`keyboard-shortcuts`:k=!1;break bb0;}}function s_e(e){let{slug:n}=e,r=c_e[n];return (0,$.jsx)(r,{})}var c_e={"general-settings":(0,Z.lazy)(()=>s(()=>import(`./general-settings-DZbwMmWz.js`).then(e=>({default:e.GeneralSettings})),__vite__mapDeps([4]),import.meta.url)),"keyboard-shortcuts":(0,Z.lazy)(()=>s(()=>import(`./keyboard-shortcuts-settings-test.js`),[],import.meta.url)),appearance:(0,Z.lazy)(()=>s(()=>import(`./appearance-settings-D4xYjo5o.js`).then(e=>({default:e.AppearanceSettings})),__vite__mapDeps([56]),import.meta.url)),agent:(0,Z.lazy)(()=>Promise.resolve({default:l_e}))};
+JS
+    cat > "$extracted/webview/assets/keyboard-shortcuts-settings-test.js" <<'JS'
+slug:`keyboard-shortcuts`;export default function KeyboardShortcutsSettings(){}
 JS
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
-    assert_file_exists "$extracted/webview/assets/keybinds-settings-linux.js"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "function KeybindsSettings"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "HotkeyWindowHotkeyRow"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "DEFAULT_SHORTCUTS"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "codex-linux-keybind-overrides"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "function ShortcutInput"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "data-codex-keybind-input"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "newThread"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "openFolder"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "toggleTerminal"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "toggleDiffPanel"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "thread9"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "CmdOrCtrl+Alt+N"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "CmdOrCtrl+Shift+O"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "CmdOrCtrl+G"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "CmdOrCtrl+J"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "CmdOrCtrl+Alt+Shift+C"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "navigateBack"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "navigateForward"
-    assert_not_contains "$extracted/webview/assets/keybinds-settings-linux.js" "CmdOrCtrl+Shift+K"
-    assert_not_contains "$extracted/webview/assets/keybinds-settings-linux.js" "Ctrl+\`"
-    assert_not_contains "$extracted/webview/assets/keybinds-settings-linux.js" "newWindow"
-    assert_not_contains "$extracted/webview/assets/keybinds-settings-linux.js" "openThreadOverlay"
-    assert_not_contains "$extracted/webview/assets/keybinds-settings-linux.js" "openAvatarOverlay"
-    assert_not_contains "$extracted/webview/assets/keybinds-settings-linux.js" "toggleTraceRecording"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "codex-linux-system-tray-enabled"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "codex-linux-warm-start-enabled"
-    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "codex-linux-prompt-window-enabled"
-    assert_contains "$extracted/webview/assets/settings-sections-test.js" 'slug:`keybinds`'
-    assert_contains "$extracted/webview/assets/settings-shared-test.js" "settings.nav.keybinds"
-    assert_contains "$extracted/webview/assets/settings-shared-test.js" "settings.section.keybinds"
-    assert_contains "$extracted/webview/assets/index-test.js" "keybinds-settings-linux.js"
-    assert_contains "$extracted/webview/assets/index-test.js" "keybinds:xh"
-    assert_contains "$extracted/webview/assets/index-test.js" 'Zge=\[`general-settings`,`keybinds`'
-    assert_contains "$extracted/webview/assets/index-test.js" 'slugs:\[`general-settings`,`keybinds`'
-    assert_contains "$extracted/webview/assets/index-test.js" 'case`keybinds`:return l===`electron`'
-    assert_contains "$extracted/webview/assets/index-test.js" "codexLinuxKeybindOverridesRuntime"
-    assert_contains "$extracted/webview/assets/index-test.js" "codex-linux-keybind-overrides"
-    assert_contains "$extracted/webview/assets/index-test.js" "go-to-thread-index"
-    assert_contains "$extracted/webview/assets/index-test.js" "newThreadAlt"
-    assert_contains "$extracted/webview/assets/index-test.js" "new-chat"
-    assert_contains "$extracted/webview/assets/index-test.js" "toggle-terminal"
-    assert_contains "$extracted/webview/assets/index-test.js" "toggle-diff-panel"
-    assert_contains "$extracted/webview/assets/index-test.js" "isShortcutCaptureTarget"
-    assert_contains "$extracted/webview/assets/index-test.js" "data-codex-keybind-input"
-    assert_not_contains "$extracted/webview/assets/index-test.js" "isEditableTarget(event))return"
-    assert_not_contains "$extracted/webview/assets/index-test.js" "ac(id)"
-
-    node - "$extracted/webview/assets/index-test.js" <<'NODE'
-const fs = require("fs");
-const vm = require("vm");
-const file = process.argv[2];
-const source = fs.readFileSync(file, "utf8");
-const marker = ";function codexLinuxKeybindOverridesRuntime()";
-const start = source.indexOf(marker);
-if (start === -1) throw new Error("missing runtime patch");
-const runtime = source
-  .slice(start)
-  .replace("codexLinuxKeybindOverridesRuntime();", "globalThis.codexLinuxKeybindOverridesRuntime=codexLinuxKeybindOverridesRuntime;");
-const listeners = {};
-const calls = [];
-class FakeElement {
-  constructor(isKeybindInput = false) {
-    this.isKeybindInput = isKeybindInput;
-  }
-  closest(selector) {
-    return selector === "[data-codex-keybind-input]" && this.isKeybindInput ? this : null;
-  }
-}
-const context = {
-  window: { addEventListener: (event, fn) => (listeners[event] ??= []).push(fn) },
-  Element: FakeElement,
-  navigator: { platform: "Linux x86_64" },
-  localStorage: { getItem: () => JSON.stringify({ toggleFileTreePanel: "Ctrl+E" }) },
-  Ct: { toggleFileTreePanel: "Command+Shift+E" },
-  E: {
-    dispatchHostMessage: (message) => calls.push(message),
-    dispatchMessage: () => {},
-  },
-  globalThis: null,
-};
-context.globalThis = context;
-vm.runInNewContext(runtime, context);
-context.codexLinuxKeybindOverridesRuntime();
-const makeEvent = (target) => ({
-  defaultPrevented: false,
-  repeat: false,
-  target,
-  ctrlKey: true,
-  altKey: false,
-  shiftKey: false,
-  metaKey: false,
-  key: "e",
-  preventDefault() {
-    this.defaultPrevented = true;
-  },
-  stopPropagation() {
-    this.stopped = true;
-  },
-});
-const composerEvent = makeEvent(new FakeElement(false));
-listeners.keydown[0](composerEvent);
-if (calls.length !== 1 || calls[0].type !== "toggle-file-tree-panel" || !composerEvent.defaultPrevented) {
-  throw new Error("Ctrl+E override did not dispatch from composer-like target");
-}
-const keybindInputEvent = makeEvent(new FakeElement(true));
-listeners.keydown[0](keybindInputEvent);
-if (calls.length !== 1 || keybindInputEvent.defaultPrevented) {
-  throw new Error("keybind capture input should not dispatch runtime override");
-}
-NODE
+    assert_file_exists "$extracted/webview/assets/linux-desktop-settings-linux.js"
+    [ ! -f "$extracted/webview/assets/keybinds-settings-linux.js" ] || fail "Old Keybinds settings asset should not be written for current native Keyboard Shortcuts"
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "function LinuxDesktopSettings"
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "Linux desktop"
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "System tray"
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "Warm start"
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "Build information"
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "codex-linux-system-tray-enabled"
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "codex-linux-warm-start-enabled"
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "codex-linux-prompt-window-enabled"
+    assert_contains "$extracted/webview/assets/settings-sections-test.js" 'slug:`linux-desktop`'
+    assert_contains "$extracted/webview/assets/settings-shared-test.js" "settings.nav.linux-desktop"
+    assert_contains "$extracted/webview/assets/settings-shared-test.js" "settings.section.linux-desktop"
+    assert_contains "$extracted/webview/assets/index-test.js" "linux-desktop-settings-linux.js"
+    assert_contains "$extracted/webview/assets/index-test.js" '"linux-desktop":'
+    assert_contains "$extracted/webview/assets/index-test.js" 'Zge=\[`general-settings`,`linux-desktop`'
+    assert_contains "$extracted/webview/assets/index-test.js" 'slugs:\[`general-settings`,`linux-desktop`'
+    assert_contains "$extracted/webview/assets/index-test.js" 'case`linux-desktop`:return l===`electron`'
+    assert_not_contains "$extracted/webview/assets/index-test.js" "keybinds-settings-linux.js"
+    assert_not_contains "$extracted/webview/assets/index-test.js" "codexLinuxKeybindOverridesRuntime"
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
-    assert_occurrence_count "$extracted/webview/assets/settings-sections-test.js" 'slug:`keybinds`' '1'
-    assert_occurrence_count "$extracted/webview/assets/settings-shared-test.js" "settings.nav.keybinds" '1'
-    assert_occurrence_count "$extracted/webview/assets/settings-shared-test.js" "settings.section.keybinds" '1'
-    assert_occurrence_count "$extracted/webview/assets/index-test.js" "keybinds-settings-linux.js" '1'
-    assert_occurrence_count "$extracted/webview/assets/index-test.js" "keybinds:xh" '1'
-    assert_occurrence_count "$extracted/webview/assets/index-test.js" "function codexLinuxKeybindOverridesRuntime" '1'
+    assert_occurrence_count "$extracted/webview/assets/settings-sections-test.js" 'slug:`linux-desktop`' '1'
+    assert_occurrence_count "$extracted/webview/assets/settings-shared-test.js" "settings.nav.linux-desktop" '1'
+    assert_occurrence_count "$extracted/webview/assets/settings-shared-test.js" "settings.section.linux-desktop" '1'
+    assert_occurrence_count "$extracted/webview/assets/index-test.js" "linux-desktop-settings-linux.js" '1'
 }
 
 test_keybinds_settings_patch_warns_on_bundle_shape_miss() {
@@ -4968,22 +4878,28 @@ test_keybinds_settings_patch_warns_on_bundle_shape_miss() {
     mkdir -p "$workspace"
     make_fake_extracted_asar "$extracted" 'let D={removeMenu(){},setMenuBarVisibility(){},setIcon(){},once(){}};let t={join(){}};let a={existsSync(){return true},statSync(){return {isFile(){return false}}}};let n={shell:{openPath(){return ""},showItemInFolder(){}}};...process.platform===`win32`?{autoHideMenuBar:!0}:{},process.platform===`win32`&&D.removeMenu(),foo)}),D.once(`ready-to-show`,()=>{var sa=Mi({id:`fileManager`,label:`Finder`,icon:`apps/finder.png`,kind:`fileManager`,darwin:{detect:()=>`open`,args:e=>ai(e)},win32:{label:`File Explorer`,icon:`apps/file-explorer.png`,detect:ca,args:e=>ai(e),open:async({path:e})=>la(e)}});function ca(){let e=1;return e}async function la(e){let t=ua(e);if(t&&(0,a.statSync)(t).isFile()){n.shell.showItemInFolder(t);return}let r=t??e,i=await n.shell.openPath(r);if(i)throw Error(i)}function ua(e){return e}var Ua=Mi({id:`systemDefault`,label:`System Default App`,icon:`apps/file-explorer.png`,kind:`systemDefault`,hidden:!0,darwin:{icon:`apps/finder.png`,detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)},win32:{detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)},linux:{detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)}});async function Wa(e){return e}'
     rm "$extracted/webview/assets/settings-row-test.js"
+    cat > "$extracted/webview/assets/keyboard-shortcuts-settings-test.js" <<'JS'
+slug:`keyboard-shortcuts`;export default function KeyboardShortcutsSettings(){}
+JS
     cat > "$extracted/webview/assets/settings-sections-test.js" <<'JS'
-var e=`general-settings`,t=`mcp-settings`,n=[{slug:e},{slug:`appearance`}],r=t;export{n,t as r,e as t};
+var e=[`general-settings`,`profile`,`keyboard-shortcuts`],t=`general-settings`,n=[{slug:`general-settings`},{slug:`keyboard-shortcuts`}];
 JS
     cat > "$extracted/webview/assets/settings-shared-test.js" <<'JS'
-var c={"general-settings":{id:`settings.nav.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}};function m(e){let t=(0,u.c)(17),{slug:r}=e;switch(r){case`general-settings`:{let e;return t[2]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(n,{id:`settings.section.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}),t[2]=e):e=t[2],e}}}
+var c={"general-settings":{id:`settings.nav.general-settings`,defaultMessage:`General`,description:`Title for general settings section`},"keyboard-shortcuts":{id:`settings.nav.keyboard-shortcuts`,defaultMessage:`Keyboard shortcuts`,description:`Title for keyboard shortcuts settings section`}};function m(e){let t=(0,u.c)(17),{slug:r}=e;switch(r){case`general-settings`:{let e;return t[2]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(n,{id:`settings.section.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}),t[2]=e):e=t[2],e}}}
 JS
     cat > "$extracted/webview/assets/index-test.js" <<'JS'
-var Xge={"general-settings":xh,appearance:Pf},H7={},Zge=[`general-settings`,`appearance`],Qge=[{key:`app`,heading:H7.appHeading,slugs:[`general-settings`,`appearance`,`connections`,`git-settings`,`usage`]}];function n_e(){let l=`electron`,e=e=>{switch(e.slug){case`appearance`:case`git-settings`:case`worktrees`:case`local-environments`:case`data-controls`:case`environments`:return l===`electron`;case`account`:case`general-settings`:return!0}};if(O)bb0:switch(D.slug){case`appearance`:case`general-settings`:k=!1;break bb0;}}var c_e={"general-settings":(0,Z.lazy)(()=>s(()=>import(`./general-settings-DZbwMmWz.js`).then(e=>({default:e.GeneralSettings})),__vite__mapDeps([4]),import.meta.url))};
+var Xge={"general-settings":xh,appearance:Pf},H7={},Zge=[`general-settings`,`appearance`],Qge=[{key:`app`,heading:H7.appHeading,slugs:[`general-settings`,`appearance`,`connections`,`git-settings`,`usage`]}];
 JS
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$output_log" "WARN: Keybinds settings patch skipped"
-    assert_contains "$output_log" "could not find settings row asset"
-    [ ! -f "$extracted/webview/assets/keybinds-settings-linux.js" ] || fail "Keybinds asset should not be written when bundle shape is missing"
-    assert_not_contains "$extracted/webview/assets/settings-sections-test.js" 'slug:`keybinds`'
-    assert_not_contains "$extracted/webview/assets/index-test.js" "keybinds-settings-linux.js"
+    assert_contains "$output_log" "could not add Linux desktop visibility"
+    [ ! -f "$extracted/webview/assets/linux-desktop-settings-linux.js" ] || fail "Linux desktop settings asset should not be written when route bundle is missing"
+    [ ! -f "$extracted/webview/assets/linux-settings-row-linux.js" ] || fail "Fallback row asset should not be written when route bundle is missing"
+    [ ! -f "$extracted/webview/assets/linux-settings-section-linux.js" ] || fail "Fallback section asset should not be written when route bundle is missing"
+    [ ! -f "$extracted/webview/assets/linux-settings-group-linux.js" ] || fail "Fallback group asset should not be written when route bundle is missing"
+    assert_not_contains "$extracted/webview/assets/settings-sections-test.js" 'slug:`linux-desktop`'
+    assert_not_contains "$extracted/webview/assets/index-test.js" "linux-desktop-settings-linux.js"
 }
 
 test_browser_annotation_screenshot_patch_smoke() {

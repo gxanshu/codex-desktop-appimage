@@ -286,39 +286,30 @@ function tryFindRequiredWebviewAsset(webviewAssetsDir, namePattern, requiredCont
   }
 }
 
-function writeLinuxSettingsFallbackComponents(webviewAssetsDir, { jsxRuntimeAsset, jsxRuntimeExportName }) {
+function linuxSettingsFallbackComponents({ jsxRuntimeAsset, jsxRuntimeExportName }) {
   const jsxImport = `import{${jsxRuntimeExportName} as __jsxFactory}from"./${jsxRuntimeAsset}";var $=__jsxFactory();`;
-  const rowAsset = "linux-settings-row-linux.js";
-  const sectionAsset = "linux-settings-section-linux.js";
-  const groupAsset = "linux-settings-group-linux.js";
-  const pageAsset = "linux-settings-page-linux.js";
-
-  fs.writeFileSync(
-    path.join(webviewAssetsDir, rowAsset),
-    `${jsxImport}function n({label,description,control}){return $.jsxs("div",{className:"flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between",children:[$.jsxs("div",{className:"min-w-0 flex-1",children:[$.jsx("div",{className:"text-sm font-medium text-token-text-primary",children:label}),$.jsx("div",{className:"mt-1 text-sm text-token-text-secondary",children:description})]}),$.jsx("div",{className:"shrink-0",children:control})]})}export{n};\n`,
-  );
-  fs.writeFileSync(
-    path.join(webviewAssetsDir, sectionAsset),
-    `${jsxImport}function n({children,className}){return $.jsx("section",{className:className??"flex flex-col gap-2",children})}n.Header=function({title}){return $.jsx("h3",{className:"text-base font-medium text-token-text-primary",children:title})};n.Content=function({children}){return $.jsx("div",{className:"flex flex-col divide-y divide-token-border-light rounded-lg border border-token-border-light bg-token-main-surface-primary",children})};export{n};\n`,
-  );
-  fs.writeFileSync(
-    path.join(webviewAssetsDir, groupAsset),
-    `${jsxImport}function n({children}){return $.jsx("div",{className:"flex flex-col divide-y divide-token-border-light",children})}export{n};\n`,
-  );
-  fs.writeFileSync(
-    path.join(webviewAssetsDir, pageAsset),
-    `${jsxImport}function t({title,subtitle,children}){return $.jsxs("div",{className:"mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6",children:[$.jsxs("div",{className:"flex flex-col gap-1",children:[$.jsx("h2",{className:"text-xl font-semibold text-token-text-primary",children:title}),subtitle?$.jsx("p",{className:"text-sm text-token-text-secondary",children:subtitle}):null]}),children]})}export{t};\n`,
-  );
 
   return {
-    settingsRowAsset: rowAsset,
-    settingsRowExportName: "n",
-    settingsPageAsset: pageAsset,
-    settingsPageExportName: "t",
-    settingsSectionAsset: sectionAsset,
-    settingsSectionExportName: "n",
-    settingsGroupAsset: groupAsset,
-    settingsGroupExportName: "n",
+    settingsRow: {
+      assetName: "linux-settings-row-linux.js",
+      exportName: "n",
+      source: `${jsxImport}function n({label,description,control}){return $.jsxs("div",{className:"flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between",children:[$.jsxs("div",{className:"min-w-0 flex-1",children:[$.jsx("div",{className:"text-sm font-medium text-token-text-primary",children:label}),$.jsx("div",{className:"mt-1 text-sm text-token-text-secondary",children:description})]}),$.jsx("div",{className:"shrink-0",children:control})]})}export{n};\n`,
+    },
+    settingsSection: {
+      assetName: "linux-settings-section-linux.js",
+      exportName: "n",
+      source: `${jsxImport}function n({children,className}){return $.jsx("section",{className:className??"flex flex-col gap-2",children})}n.Header=function({title}){return $.jsx("h3",{className:"text-base font-medium text-token-text-primary",children:title})};n.Content=function({children}){return $.jsx("div",{className:"flex flex-col divide-y divide-token-border-light rounded-lg border border-token-border-light bg-token-main-surface-primary",children})};export{n};\n`,
+    },
+    settingsGroup: {
+      assetName: "linux-settings-group-linux.js",
+      exportName: "n",
+      source: `${jsxImport}function n({children}){return $.jsx("div",{className:"flex flex-col divide-y divide-token-border-light",children})}export{n};\n`,
+    },
+    settingsPage: {
+      assetName: "linux-settings-page-linux.js",
+      exportName: "t",
+      source: `${jsxImport}function t({title,subtitle,children}){return $.jsxs("div",{className:"mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6",children:[$.jsxs("div",{className:"flex flex-col gap-1",children:[$.jsx("h2",{className:"text-xl font-semibold text-token-text-primary",children:title}),subtitle?$.jsx("p",{className:"text-sm text-token-text-secondary",children:subtitle}):null]}),children]})}export{t};\n`,
+    },
   };
 }
 
@@ -367,19 +358,34 @@ function resolveSettingsAssetDependencies(extractedDir, { includeHotkeySettings 
         "hotkey settings asset",
       )
     : null;
-  const fallbackComponents = writeLinuxSettingsFallbackComponents(webviewAssetsDir, {
+  const fallbackComponents = linuxSettingsFallbackComponents({
     jsxRuntimeAsset,
     jsxRuntimeExportName,
   });
-  const settingsRowAsset = tryFindRequiredWebviewAsset(webviewAssetsDir, /^settings-row-.*\.js$/, null, "settings row asset")
-    ?? fallbackComponents.settingsRowAsset;
-  const settingsRowSource = fs.readFileSync(path.join(webviewAssetsDir, settingsRowAsset), "utf8");
-  const settingsLayoutAsset = tryFindRequiredWebviewAsset(
+  const generatedAssets = [];
+  const useFallbackComponent = (componentName) => {
+    const component = fallbackComponents[componentName];
+    generatedAssets.push({
+      filePath: path.join(webviewAssetsDir, component.assetName),
+      source: component.source,
+    });
+    return component;
+  };
+
+  const settingsRowCandidate = tryFindRequiredWebviewAsset(webviewAssetsDir, /^settings-row-.*\.js$/, null, "settings row asset");
+  const settingsRowFallback = settingsRowCandidate == null ? useFallbackComponent("settingsRow") : null;
+  const settingsRowAsset = settingsRowCandidate ?? settingsRowFallback.assetName;
+  const settingsRowSource = settingsRowCandidate == null
+    ? settingsRowFallback.source
+    : fs.readFileSync(path.join(webviewAssetsDir, settingsRowAsset), "utf8");
+  const settingsLayoutCandidate = tryFindRequiredWebviewAsset(
     webviewAssetsDir,
     /^settings-content-layout-.*\.js$/,
     null,
     "settings content layout asset",
-  ) ?? fallbackComponents.settingsPageAsset;
+  );
+  const settingsLayoutFallback = settingsLayoutCandidate == null ? useFallbackComponent("settingsPage") : null;
+  const settingsLayoutAsset = settingsLayoutCandidate ?? settingsLayoutFallback.assetName;
   const settingsGroupCandidate = fs
     .readdirSync(webviewAssetsDir)
     .filter((name) => /^settings-group-.*\.js$/.test(name))
@@ -388,6 +394,8 @@ function resolveSettingsAssetDependencies(extractedDir, { includeHotkeySettings 
     .readdirSync(webviewAssetsDir)
     .filter((name) => /^settings-surface-.*\.js$/.test(name))
     .sort()[0] ?? null;
+  const settingsSectionFallback = settingsGroupCandidate == null ? useFallbackComponent("settingsSection") : null;
+  const settingsGroupFallback = settingsSurfaceCandidate == null ? useFallbackComponent("settingsGroup") : null;
 
   return {
     chunkAsset,
@@ -401,11 +409,12 @@ function resolveSettingsAssetDependencies(extractedDir, { includeHotkeySettings 
     settingsRowAsset,
     settingsRowExportName: inferSettingsRowExportName(settingsRowSource),
     settingsPageAsset: settingsLayoutAsset,
-    settingsPageExportName: "t",
-    settingsSectionAsset: settingsGroupCandidate ?? fallbackComponents.settingsSectionAsset,
-    settingsSectionExportName: settingsGroupCandidate == null ? fallbackComponents.settingsSectionExportName : "t",
-    settingsGroupAsset: settingsSurfaceCandidate ?? fallbackComponents.settingsGroupAsset,
-    settingsGroupExportName: settingsSurfaceCandidate == null ? fallbackComponents.settingsGroupExportName : "t",
+    settingsPageExportName: settingsLayoutFallback == null ? "t" : settingsLayoutFallback.exportName,
+    settingsSectionAsset: settingsGroupCandidate ?? settingsSectionFallback.assetName,
+    settingsSectionExportName: settingsGroupCandidate == null ? settingsSectionFallback.exportName : "t",
+    settingsGroupAsset: settingsSurfaceCandidate ?? settingsGroupFallback.assetName,
+    settingsGroupExportName: settingsSurfaceCandidate == null ? settingsGroupFallback.exportName : "t",
+    generatedAssets,
   };
 }
 
@@ -416,6 +425,7 @@ function resolveKeybindsSettingsAsset(extractedDir) {
   return {
     filePath: path.join(webviewAssetsDir, keybindsSettingsAsset),
     source: buildKeybindsSettingsSource(dependencies),
+    generatedAssets: dependencies.generatedAssets,
   };
 }
 
@@ -428,6 +438,7 @@ function resolveLinuxDesktopSettingsAsset(extractedDir) {
   return {
     filePath: path.join(webviewAssetsDir, linuxDesktopSettingsAsset),
     source: buildLinuxDesktopSettingsSource(dependencies),
+    generatedAssets: dependencies.generatedAssets,
   };
 }
 
@@ -597,64 +608,49 @@ function hasNativeKeyboardShortcutsSettings(extractedDir) {
 
 function patchKeybindsSettingsAssets(extractedDir) {
   try {
-    const hasNativeSettings = hasNativeKeyboardShortcutsSettings(extractedDir);
-    const settingsAsset = hasNativeSettings
-      ? resolveLinuxDesktopSettingsAsset(extractedDir)
-      : resolveKeybindsSettingsAsset(extractedDir);
+    if (!hasNativeKeyboardShortcutsSettings(extractedDir)) {
+      throw new Error("Required Keybinds settings patch failed: current upstream Keyboard Shortcuts settings route is missing");
+    }
+
+    const settingsAsset = resolveLinuxDesktopSettingsAsset(extractedDir);
     const settingsAssetExists = fs.existsSync(settingsAsset.filePath);
     const previousSettingsSource = settingsAssetExists
       ? fs.readFileSync(settingsAsset.filePath, "utf8")
       : null;
-    const patches = hasNativeSettings
-      ? [
-          ...collectOptionalMatchingAssetPatches(
-            extractedDir,
-            isSettingsSectionsMetadataBundleSource,
-            applyLinuxDesktopSettingsSectionsPatch,
-          ),
-          ...collectOptionalMatchingAssetPatches(
-            extractedDir,
-            isSettingsSharedMetadataBundleSource,
-            applyLinuxDesktopSettingsSharedPatch,
-          ),
-          ...collectLinuxDesktopRouteAndNavigationPatches(extractedDir),
-        ]
-      : [
-          ...collectRequiredAssetPatches(
-            extractedDir,
-            /^settings-sections-.*\.js$/,
-            applyKeybindsSettingsSectionsPatch,
-            "settings sections bundle",
-          ),
-          ...collectRequiredAssetPatches(
-            extractedDir,
-            /^settings-shared-.*\.js$/,
-            applyKeybindsSettingsSharedPatch,
-            "settings shared bundle",
-          ),
-          ...collectRequiredAssetPatches(
-            extractedDir,
-            /^index-.*\.js$/,
-            applyKeybindsSettingsIndexPatch,
-            "webview index bundle",
-          ),
-        ];
+    const patches = [
+      ...collectOptionalMatchingAssetPatches(
+        extractedDir,
+        isSettingsSectionsMetadataBundleSource,
+        applyLinuxDesktopSettingsSectionsPatch,
+      ),
+      ...collectOptionalMatchingAssetPatches(
+        extractedDir,
+        isSettingsSharedMetadataBundleSource,
+        applyLinuxDesktopSettingsSharedPatch,
+      ),
+      ...collectLinuxDesktopRouteAndNavigationPatches(extractedDir),
+    ];
 
+    const generatedWrites = (settingsAsset.generatedAssets ?? []).filter((generatedAsset) =>
+      !fs.existsSync(generatedAsset.filePath) ||
+        fs.readFileSync(generatedAsset.filePath, "utf8") !== generatedAsset.source
+    );
+    for (const generatedAsset of generatedWrites) {
+      fs.writeFileSync(generatedAsset.filePath, generatedAsset.source, "utf8");
+    }
     fs.writeFileSync(settingsAsset.filePath, settingsAsset.source, "utf8");
-    let changed = previousSettingsSource !== settingsAsset.source ? 1 : 0;
+    let changed = generatedWrites.length + (previousSettingsSource !== settingsAsset.source ? 1 : 0);
     for (const patch of patches) {
       if (patch.patchedSource !== patch.currentSource) {
         fs.writeFileSync(patch.filePath, patch.patchedSource, "utf8");
         changed += 1;
       }
     }
-    return hasNativeSettings
-      ? {
-          matched: true,
-          changed,
-          reason: "upstream keyboard shortcuts settings are present; added Linux desktop settings",
-        }
-      : { matched: true, changed };
+    return {
+      matched: true,
+      changed,
+      reason: "upstream keyboard shortcuts settings are present; added Linux desktop settings",
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`WARN: Keybinds settings patch skipped: ${message}`);

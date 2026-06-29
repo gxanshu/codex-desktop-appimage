@@ -196,6 +196,7 @@ function findCodexRequestWebviewAsset(webviewAssetsDir) {
     .sort()
     .filter((name) => !settingStorageCandidates.includes(name));
   const modernCandidates = [...settingStorageCandidates, ...allRequestCandidates];
+  const matches = [];
   for (const candidate of modernCandidates) {
     const source = readWebviewAsset(webviewAssetsDir, candidate);
     if (!source.includes("vscode://codex/")) {
@@ -203,8 +204,18 @@ function findCodexRequestWebviewAsset(webviewAssetsDir) {
     }
     const exportName = findCodexRequestExportName(source);
     if (exportName != null) {
-      return { assetName: candidate, exportName };
+      matches.push({ assetName: candidate, exportName });
     }
+  }
+
+  if (matches.length > 1) {
+    throw new Error(
+      `Required Keybinds settings patch failed: found multiple Codex request API assets (${matches.map(({ assetName }) => assetName).join(", ")})`,
+    );
+  }
+
+  if (matches.length === 1) {
+    return matches[0];
   }
 
   throw new Error("Required Keybinds settings patch failed: could not find Codex request API asset");
