@@ -20,6 +20,12 @@ installs continue to update through npm, while official standalone installs
 under `~/.codex/packages/standalone` are updated with the official standalone
 installer instead of being replaced through npm.
 
+The launcher does not choose the newest installed CLI. It resolves an explicit
+`CODEX_CLI_PATH` first, then falls back to the usual `PATH`, nvm, and known
+user/system locations. Startup logs include the resolved path plus a
+best-effort CLI version probe; set `CODEX_CLI_PATH=/path/to/codex` when you
+need to pin a particular binary from a GUI-launched session.
+
 ## Inspect State
 
 ```bash

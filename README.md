@@ -71,7 +71,10 @@ Use, Codex CLI install/update, or local auto-update rebuilds.
 
 The Codex CLI is still required at runtime. The first launch can install or
 update `@openai/codex` with the bundled `npm`, or you can manage the CLI
-yourself.
+yourself. The launcher does not rank installed CLIs by version; it uses an
+explicit `CODEX_CLI_PATH` first, then the normal lookup order, and logs the
+resolved CLI path plus best-effort version so GUI PATH issues are visible.
+Set `CODEX_CLI_PATH=/path/to/codex` when you want to pin a specific binary.
 
 X11 and Wayland sessions are supported. The launcher prefers XWayland on
 Wayland when available for better Electron popup positioning, then falls back
@@ -219,7 +222,7 @@ not download or extract the DMG themselves. See
 |---|---|
 | `/tmp` is mounted `noexec` | Set `TMPDIR` and `XDG_CACHE_HOME` to executable directories under `$HOME` |
 | Blank window or splash stuck | Check `~/.cache/codex-desktop/launcher.log` and whether port `5175` is already in use |
-| `CODEX_CLI_PATH` or CLI install error | Reopen the app or install `@openai/codex` manually |
+| `CODEX_CLI_PATH` or CLI install error | Check `~/.cache/codex-desktop/launcher.log`, set `CODEX_CLI_PATH=/path/to/codex` to pin a binary, or install `@openai/codex` manually |
 | Wayland / GPU / Vulkan hang | Try `CODEX_LINUX_RENDERING_MODE=wayland-gpu ./codex-app/start.sh` or persistent launch flags |
 | Resize ghosting or stale frame trails | Try `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 ./codex-app/start.sh` or `--disable-gpu-compositing` |
 | Computer Use UI is hidden | Enable the UI opt-in; account/server rollouts may still hide upstream-gated parts |

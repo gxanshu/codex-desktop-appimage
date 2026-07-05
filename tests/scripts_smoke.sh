@@ -3751,6 +3751,13 @@ if 'if needs_cold_start && [ -z "$CODEX_CLI_PATH" ]; then' not in runtime_body:
     raise SystemExit("second-instance handoff must skip missing-CLI failure")
 if '"$HOME/.bun/bin/codex"' not in source:
     raise SystemExit("CLI lookup must include bun global install path")
+if "codex_cli_version_probe()" not in source or "codex_cli_version()" not in source:
+    raise SystemExit("CLI lookup must log a bounded best-effort resolved CLI version probe")
+if "version unknown; set CODEX_CLI_PATH=/path/to/codex" not in source:
+    raise SystemExit("CLI lookup diagnostics must explain explicit CODEX_CLI_PATH pinning")
+for unexpected in ("find_codex_cli_entry", "codex_cli_version_compare", "codex_cli_version_gt", "sort -V"):
+    if unexpected in source:
+        raise SystemExit(f"launcher must not rank discovered CLI candidates with {unexpected}")
 if "if needs_cold_start;" not in runtime_body:
     raise SystemExit("second-instance handoff must skip CLI preflight")
 if 'run_cold_start_hooks' not in runtime_body:
@@ -4225,6 +4232,111 @@ if (!launcher.includes('ln -sfnT "$target" "$link_path"')) {
   throw new Error("replace_symlink must replace plugin links as paths, not as directory children");
 }
 NODE
+}
+
+test_launcher_cli_resolution_policy() {
+    info "Checking launcher CLI resolution policy"
+    local launcher_probe="$TMP_DIR/launcher-cli-policy-probe.sh"
+    python3 - "$REPO_DIR/launcher/start.sh.template" "$launcher_probe" <<'PY'
+import pathlib
+import re
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+functions = []
+for name in ("find_codex_cli", "codex_cli_version_probe", "codex_cli_version", "log_codex_cli_path"):
+    match = re.search(r"^" + re.escape(name) + r"\(\) \{[\s\S]*?^\}\n", source, re.M)
+    if match is None:
+        raise SystemExit(f"missing {name}")
+    functions.append(match.group(0))
+
+pathlib.Path(sys.argv[2]).write_text(
+    "#!/usr/bin/env bash\n"
+    "set -Eeuo pipefail\n\n"
+    + "\n".join(functions)
+    + r'''
+case "${1:?}" in
+    find)
+        find_codex_cli
+        ;;
+    version)
+        codex_cli_version "$2"
+        ;;
+    log)
+        CODEX_CLI_PATH="${2:-}"
+        export CODEX_CLI_PATH
+        log_codex_cli_path
+        ;;
+    *)
+        exit 64
+        ;;
+esac
+''',
+    encoding="utf-8",
+)
+PY
+    chmod +x "$launcher_probe"
+
+    local workspace="$TMP_DIR/launcher-cli-policy"
+    local fake_home="$workspace/home"
+    local path_cli_bin="$workspace/path-cli-bin"
+    local selected_cli
+    mkdir -p "$path_cli_bin" "$fake_home/.npm-global/bin"
+
+    printf '#!/usr/bin/env bash\nprintf "codex-cli 0.120.0\\n"\n' > "$path_cli_bin/codex"
+    printf '#!/usr/bin/env bash\nprintf "codex-cli 9.999.0\\n"\n' > "$fake_home/.npm-global/bin/codex"
+    chmod +x "$path_cli_bin/codex" "$fake_home/.npm-global/bin/codex"
+
+    selected_cli="$(env -i PATH="$path_cli_bin:/usr/bin:/bin" HOME="$fake_home" "$launcher_probe" find)"
+    [ "$selected_cli" = "$path_cli_bin/codex" ] || fail "CLI lookup must keep the first PATH hit, got $selected_cli"
+
+    local override_cli="$workspace/override-codex"
+    local log_output
+    printf '#!/usr/bin/env bash\nprintf "codex-cli 0.42.0\\n"\n' > "$override_cli"
+    chmod +x "$override_cli"
+    log_output="$(env -i PATH="$path_cli_bin:/usr/bin:/bin" HOME="$fake_home" "$launcher_probe" log "$override_cli")"
+    [[ "$log_output" == "Using CODEX_CLI_PATH=$override_cli (version 0.42.0)" ]] || fail "CODEX_CLI_PATH must remain an explicit override with version logging: $log_output"
+
+    local dash_version_cli="$workspace/dash-version-codex"
+    local fallback_version_cli="$workspace/fallback-version-codex"
+    local version_output
+    printf '#!/usr/bin/env bash\n[ "${1:-}" = "--version" ] || exit 2\nprintf "codex-cli 0.150.0\\n"\n' > "$dash_version_cli"
+    printf '#!/usr/bin/env bash\nif [ "${1:-}" = "--version" ]; then exit 2; fi\n[ "${1:-}" = "version" ] || exit 2\nprintf "codex-cli v0.151.0\\n"\n' > "$fallback_version_cli"
+    chmod +x "$dash_version_cli" "$fallback_version_cli"
+
+    version_output="$(env -i PATH="/usr/bin:/bin" HOME="$fake_home" "$launcher_probe" version "$dash_version_cli")"
+    [ "$version_output" = "0.150.0" ] || fail "CLI version probe must read --version output, got $version_output"
+    version_output="$(env -i PATH="/usr/bin:/bin" HOME="$fake_home" "$launcher_probe" version "$fallback_version_cli")"
+    [ "$version_output" = "0.151.0" ] || fail "CLI version probe must fall back to version output, got $version_output"
+
+    local unknown_cli="$workspace/unknown-version-codex"
+    printf '#!/usr/bin/env bash\nprintf "codex-cli dev build\\n"\n' > "$unknown_cli"
+    chmod +x "$unknown_cli"
+    log_output="$(env -i PATH="/usr/bin:/bin" HOME="$fake_home" "$launcher_probe" log "$unknown_cli")"
+    [[ "$log_output" == "Using CODEX_CLI_PATH=$unknown_cli (version unknown; set CODEX_CLI_PATH=/path/to/codex to pin a known CLI)" ]] || fail "CLI diagnostics must explain unknown versions and explicit pinning: $log_output"
+
+    local hanging_cli="$workspace/hanging-codex"
+    local hanging_pid_file="$workspace/hanging.pid"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'printf "%%s\\n" "$$" > %q\n' "$hanging_pid_file"
+        printf 'printf "codex-cli 9.999.0\\n"\n'
+        printf 'exec sleep 30\n'
+    } > "$hanging_cli"
+    chmod +x "$hanging_cli"
+
+    version_output="$(env -i PATH="/usr/bin:/bin" HOME="$fake_home" TMPDIR="$workspace" "$launcher_probe" version "$hanging_cli" || true)"
+    [ -z "$version_output" ] || fail "hanging CLI probe must ignore partial version output, got $version_output"
+    assert_file_exists "$hanging_pid_file"
+    local hanging_pid
+    hanging_pid="$(cat "$hanging_pid_file")"
+    if kill -0 "$hanging_pid" 2>/dev/null; then
+        sleep 0.1
+    fi
+    if kill -0 "$hanging_pid" 2>/dev/null; then
+        kill -9 "$hanging_pid" 2>/dev/null || true
+        fail "hanging CLI probe left process $hanging_pid alive"
+    fi
 }
 
 test_webview_server_cache_policy() {
@@ -7045,6 +7157,7 @@ main() {
     test_chrome_marketplace_fallback_synthesis
     test_chrome_native_host_manifest_writer
     test_launcher_template_sanity
+    test_launcher_cli_resolution_policy
     test_webview_server_cache_policy
     test_process_detection_helper_cmdline_shapes
     test_webview_probe_equivalence

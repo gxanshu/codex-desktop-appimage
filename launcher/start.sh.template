@@ -1408,6 +1408,98 @@ find_codex_cli() {
     return 1
 }
 
+codex_cli_version_probe() {
+    local output_file="$1"
+    shift
+    local marker="${output_file}.timed-out"
+    local probe_pid
+    local watchdog_pid
+    local status=0
+
+    rm -f "$marker"
+    "$@" >"$output_file" 2>/dev/null &
+    probe_pid="$!"
+    ( trap - EXIT
+      sleep 1
+      if kill -0 "$probe_pid" 2>/dev/null; then
+          : > "$marker"
+          kill "$probe_pid" 2>/dev/null || true
+          sleep 0.05
+          kill -9 "$probe_pid" 2>/dev/null || true
+      fi
+    ) &
+    watchdog_pid="$!"
+
+    if wait "$probe_pid"; then
+        status=0
+    else
+        status=$?
+    fi
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+
+    if [ -e "$marker" ]; then
+        rm -f "$marker"
+        return 124
+    fi
+    rm -f "$marker"
+    return "$status"
+}
+
+codex_cli_version() {
+    local cli_path="$1"
+    local probe_file
+    local output
+    local version
+    local version_arg
+    local probe_status=0
+
+    [ -n "$cli_path" ] || return 1
+    [ -x "$cli_path" ] || return 1
+    probe_file="$(mktemp "${TMPDIR:-/tmp}/codex-cli-version.XXXXXX" 2>/dev/null)" || return 1
+
+    for version_arg in --version version; do
+        : > "$probe_file"
+        if codex_cli_version_probe "$probe_file" "$cli_path" "$version_arg"; then
+            output="$(sed -n '1,3p' "$probe_file" 2>/dev/null || true)"
+            version="$(printf '%s\n' "$output" | sed -nE '
+s/^v?([0-9]+([.][0-9]+)+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?)([^0-9A-Za-z._+-].*)?$/\1/p
+s/.*[^0-9A-Za-z._+-]v?([0-9]+([.][0-9]+)+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?)([^0-9A-Za-z._+-].*)?$/\1/p
+' | head -n 1)"
+            if [ -n "$version" ]; then
+                rm -f "$probe_file" "${probe_file}.timed-out"
+                echo "$version"
+                return 0
+            fi
+        else
+            probe_status=$?
+            if [ "$probe_status" -eq 124 ]; then
+                rm -f "$probe_file" "${probe_file}.timed-out"
+                return 1
+            fi
+        fi
+    done
+
+    rm -f "$probe_file" "${probe_file}.timed-out"
+    return 1
+}
+
+log_codex_cli_path() {
+    local version
+
+    if [ -z "${CODEX_CLI_PATH:-}" ]; then
+        echo "Using CODEX_CLI_PATH=warm-start-skip"
+        return 0
+    fi
+
+    version="$(codex_cli_version "$CODEX_CLI_PATH" || true)"
+    if [ -n "$version" ]; then
+        echo "Using CODEX_CLI_PATH=$CODEX_CLI_PATH (version $version)"
+    else
+        echo "Using CODEX_CLI_PATH=$CODEX_CLI_PATH (version unknown; set CODEX_CLI_PATH=/path/to/codex to pin a known CLI)"
+    fi
+}
+
 notify_error() {
     local message="$1"
     local icon
@@ -3097,7 +3189,7 @@ if needs_cold_start; then
     fi
 fi
 
-echo "Using CODEX_CLI_PATH=${CODEX_CLI_PATH:-warm-start-skip}"
+log_codex_cli_path
 echo "Using managed Node.js runtime=${CODEX_MANAGED_NODE_RUNTIME_DIR:-$SCRIPT_DIR/resources/node-runtime}"
 
 launch_electron "${LAUNCHER_ARGS[@]}"
