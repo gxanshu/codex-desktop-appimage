@@ -303,6 +303,9 @@ make clean-dist
 | Computer Use AT-SPI tree empty | Run `codex-computer-use-linux setup` to flip GNOME accessibility on, then restart the target app |
 | Stale `codex-update-manager` service from an old native package install | `systemctl --user disable --now codex-update-manager.service` once in the affected session, then remove `/opt/codex-desktop` and any installed deb/rpm/pacman packages from the upstream project |
 | Resize ghosting or stale frame trails | Try `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 ./codex-app/start.sh` or `--disable-gpu-compositing` |
+| UI oversized or blurry (HiDPI / fractional scaling) | Try `CODEX_FORCE_DEVICE_SCALE_FACTOR=1 ./codex-app/start.sh` or `CODEX_OZONE_PLATFORM=x11 ./codex-app/start.sh`; inspect the detected scaling with `./codex-app/start.sh --diagnose-scaling` |
+| Wayland GPU / Vulkan hang | Try `CODEX_LINUX_RENDERING_MODE=wayland-gpu ./codex-app/start.sh`, or the default X11/auto fallback |
+| `/tmp` mounted `noexec` | Set `TMPDIR` and `XDG_CACHE_HOME` to executable directories under `$HOME` before launching |
 
 ## How it works
 
