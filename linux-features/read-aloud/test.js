@@ -19,12 +19,24 @@ const {
   applySettingsPatch,
   applySettingsSectionsNavPatch,
   applySettingsSharedNavPatch,
+  descriptors: featurePatches,
 } = require("./patch.js");
 
 function twice(fn, source) {
   const patched = fn(source);
   assert.equal(fn(patched), patched);
   return patched;
+}
+
+function captureWarnings(fn) {
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    return { result: fn(), warnings };
+  } finally {
+    console.warn = originalWarn;
+  }
 }
 
 test("main bundle patch adds a Linux read aloud handler", () => {
@@ -855,6 +867,23 @@ test("assistant render patch adds an explicit read aloud button under the messag
   assert.match(patched, /\$\.Fragment/);
 });
 
+test("assistant render patch ignores normalized assistant items without render props", () => {
+  const source = "case`agentMessage`:{let s=e.status===`inProgress`&&d>=0&&t===d,l=s&&Spt(i.content);a.push({type:`assistant-message`,content:m,completed:!s,renderPlaceholderWhileStreaming:l});break}";
+  const { result: patched, warnings } = captureWarnings(() => applyAssistantRenderPatch(source));
+
+  assert.equal(patched, source);
+  assert.deepEqual(warnings, []);
+});
+
+test("assistant render patch still warns when an assistant render candidate drifts", () => {
+  const source = "return renderMessage({item:n,assistantCopyText:p,conversationId:o,renderCodeBlocksAsWritingBlocks:V})";
+  const { result: patched, warnings } = captureWarnings(() => applyAssistantRenderPatch(source));
+
+  assert.equal(patched, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /Could not find assistant message render call/);
+});
+
 test("assistant render patch preserves the current JSX runtime alias", () => {
   const source = "return (0,Q.jsx)(Ov,{item:n,alwaysShowActions:M,assistantCopyText:p,turnId:m,autoReviewStats:y,hookStats:b,completedThreadGoal:x,after:g,conversationId:o,cwd:u,forceCodeBlockWordWrap:V,hasArtifacts:F,onAddSelectedTextToChat:H,onFileLinkOpen:v,onFork:D,renderCodeBlocksAsWritingBlocks:V})";
   const patched = twice(applyAssistantRenderPatch, source);
@@ -862,6 +891,24 @@ test("assistant render patch preserves the current JSX runtime alias", () => {
   assert.match(patched, /Q\.Fragment/);
   assert.match(patched, /\(0,Q\.jsx\)\("button"/);
   assert.match(patched, /globalThis\.codexLinuxReadAloudClick\?\.\(n,p,o,e\.currentTarget\)/);
+});
+
+test("assistant render patch covers the current shared assistant message call", () => {
+  const source = "return (0,DX.jsx)(Jft,{item:n,alwaysShowActions:V,assistantCopyText:_,turnId:v,processTargets:b,hookStats:D,threadDetailLevel:u,completedThreadGoal:O,after:C,electronAfter:w,conversationId:l,cwd:p,hostId:m,reportEntityType:h,markdownMediaCacheKey:e,projectlessOutputDirectory:q,forceCodeBlockWordWrap:ie,hasArtifacts:J,onAddSelectedTextToChat:r,onFileLinkOpen:E,onFork:F,renderCodeBlocksAsWritingBlocks:ie,showActionRow:H,showTimestampWithoutActions:U,showProcessBadges:i})";
+  const patched = twice(applyAssistantRenderPatch, source);
+
+  assert.match(patched, /DX\.Fragment/);
+  assert.match(patched, /\(0,DX\.jsx\)\("button"/);
+  assert.match(patched, /globalThis\.codexLinuxReadAloudClick\?\.\(n,_,l,e\.currentTarget\)/);
+});
+
+test("assistant runtime descriptor targets current shared assistant bundles", () => {
+  const descriptor = featurePatches.find((patch) => patch.id === "assistant-runtime");
+  assert.ok(descriptor);
+  assert.equal(descriptor.pattern.test("index-current.js"), true);
+  assert.equal(descriptor.pattern.test("local-conversation-thread-current.js"), true);
+  assert.equal(descriptor.pattern.test("local-conversation-turn-current.js"), true);
+  assert.equal(descriptor.pattern.test("app-initial~app-main~onboarding-page-current.js"), true);
 });
 
 test("settings patch does not add the legacy normal settings toggle", () => {
@@ -962,28 +1009,39 @@ test("general settings patch follows current export map instead of stale Gn alia
   const source = [
     'import{s as e}from"./src-BRBmN298.js";',
     'import{t as xt}from"./settings-content-layout-Dm8iYKt_.js";',
-    'import{n as q}from"./settings-row-xI_5tNBH.js";',
-    'import{t as K}from"./toggle-Cl52yCxI.js";',
-    'import{c as F,o as I}from"./lib-MoKmYgcO.js";',
-    'import{n as k}from"./vscode-api-DjORcpSo.js";',
+    'import{a as st,r as K,t as ct}from"./dropdown-CTBRoADH.js";',
+    'import{r as J}from"./settings-row-FLzCWFCC.js";',
+    'import{t as Tg}from"./toggle-Cl52yCxI.js";',
+    'import{i as M,l as N,s as P}from"./lib-MoKmYgcO.js";',
+    'import{t as F}from"./clsx-DF17mjDp.js";',
+    'import{n as I,y as L}from"./app-shell-state-Dq2x034T.js";',
+    'import{n as m}from"./vscode-api-DjORcpSo.js";',
     'import{n as v,t as y}from"./jsx-runtime-CiQ1k8xo.js";',
     'import{t as St}from"./sun-BbSktlDj.js";',
     'import{a as U,i as W}from"./setting-storage-CwKZnsvR.js";',
     'import{n as wt}from"./external-agent-import-step-CfOKFuct.js";',
     "var Q=e(v(),1),$=y();",
     "function Gn(){return (0,$.jsx)(K,{label:`Service tier`})}",
-    "function nr(){return (0,$.jsxs)(q,{className:`gap-2`,children:[x,(0,$.jsx)(q.Content,{children:(0,$.jsxs)(wt,{children:[v,y,b]})})]})}",
+    "function nr(){return (0,$.jsx)(J,{label:`General`})}",
     "export{or as i,ar as n,nr as r,Tr as t};",
   ].join("");
   const patched = twice(applyGeneralSettingsPatch, source);
   assert.match(patched, /codexLinuxReadAloudSettingsAliasesV2/);
   assert.match(patched, /function codexLinuxReadAloudSettingsPage\(\)\{return\(0,\$\.jsx\)\(xt/);
-  assert.match(patched, /\(0,\$\.jsx\)\(q,\{label:l/);
-  assert.match(patched, /\(0,\$\.jsx\)\(K,\{checked:e===!0/);
+  assert.match(patched, /\(0,\$\.jsx\)\(J,\{label:l/);
+  assert.doesNotMatch(patched, /\(0,\$\.jsx\)\(K,\{label:l/);
+  assert.match(patched, /\(0,\$\.jsx\)\(Tg,\{checked:e===!0/);
+  assert.match(patched, /c=N\(\);/);
+  assert.match(patched, /\(0,\$\.jsx\)\(P,\{id:`settings\.general\.readAloud\.label`/);
+  assert.match(patched, /\(0,\$\.jsx\)\(P,\{id:`settings\.readAloud\.title`/);
+  assert.doesNotMatch(patched, /c=F\(\);/);
+  assert.doesNotMatch(patched, /\(0,\$\.jsx\)\(I,\{id:`settings\.(general\.readAloud|readAloud)\./);
   assert.match(patched, /\(0,Q\.useState\)\(!1\)/);
-  assert.match(patched, /k\(`get-global-state`,\{params:\{key:"codex-linux-read-aloud-enabled"\}\}\)/);
-  assert.match(patched, /k\(`set-global-state`,\{params:\{key:"codex-linux-read-aloud-enabled",value:n\}\}\)/);
-  assert.match(patched, /k\(`set-global-state`,\{params:\{key:"codex-linux-read-aloud-kokoro-speed",value:t\}\}\)/);
+  assert.match(patched, /m\(`get-global-state`,\{params:\{key:"codex-linux-read-aloud-enabled"\}\}\)/);
+  assert.match(patched, /m\(`set-global-state`,\{params:\{key:"codex-linux-read-aloud-enabled",value:n\}\}\)/);
+  assert.match(patched, /m\(`set-global-state`,\{params:\{key:"codex-linux-read-aloud-kokoro-speed",value:t\}\}\)/);
+  assert.match(patched, /codexLinuxReadAloudChooseFolderLabel=c\.formatMessage/);
+  assert.doesNotMatch(patched, /m=c\.formatMessage/);
   assert.doesNotMatch(patched, /set-setting|get-setting/);
   assert.doesNotMatch(patched, /let e=S\(D\),t=F\(\),n=\{key:"codex-linux-read-aloud-enabled",default:!1\}/);
   assert.doesNotMatch(patched, /U\(e,n,t\)/);
@@ -1000,10 +1058,13 @@ test("general settings patch upgrades a stale current read aloud settings page",
   const source = [
     'import{s as e}from"./src-BRBmN298.js";',
     'import{t as xt}from"./settings-content-layout-Dm8iYKt_.js";',
-    'import{n as q}from"./settings-row-xI_5tNBH.js";',
-    'import{t as K}from"./toggle-Cl52yCxI.js";',
-    'import{c as F,o as I}from"./lib-MoKmYgcO.js";',
-    'import{n as k}from"./vscode-api-DjORcpSo.js";',
+    'import{a as st,r as K,t as ct}from"./dropdown-CTBRoADH.js";',
+    'import{r as J}from"./settings-row-FLzCWFCC.js";',
+    'import{t as Tg}from"./toggle-Cl52yCxI.js";',
+    'import{i as M,l as N,s as P}from"./lib-MoKmYgcO.js";',
+    'import{t as F}from"./clsx-DF17mjDp.js";',
+    'import{n as I,y as L}from"./app-shell-state-Dq2x034T.js";',
+    'import{n as m}from"./vscode-api-DjORcpSo.js";',
     'import{n as v,t as y}from"./jsx-runtime-CiQ1k8xo.js";',
     'import{t as St}from"./sun-BbSktlDj.js";',
     'import{a as U,i as W}from"./setting-storage-CwKZnsvR.js";',
@@ -1011,7 +1072,7 @@ test("general settings patch upgrades a stale current read aloud settings page",
     "var Q=e(v(),1),$=y();",
     "function Gn(){return (0,$.jsx)(K,{label:`Service tier`})}",
     "function codexLinuxReadAloudPaceValue(e){return 1.05}function codexLinuxReadAloudSettingsRow(){return `codex-linux-read-aloud-enabled codex-linux-read-aloud-kokoro-speed settings.general.readAloud.chooseFolder settings.general.readAloud.help`}function codexLinuxReadAloudSettingsPage(){return(0,$.jsx)(St,{children:(0,$.jsx)(W,{electron:!0,children:(0,$.jsx)(wt,{children:(0,$.jsx)(codexLinuxReadAloudSettingsRow,{})})})})}",
-    "function nr(){return (0,$.jsx)(q,{label:`General`})}",
+    "function nr(){return (0,$.jsx)(J,{label:`General`})}",
     "export{or as i,ar as n,nr as r,Tr as t,codexLinuxReadAloudSettingsPage as ReadAloudSettings};",
   ].join("");
   const patched = twice(applyGeneralSettingsPatch, source);
@@ -1019,7 +1080,43 @@ test("general settings patch upgrades a stale current read aloud settings page",
   assert.equal((patched.match(/function codexLinuxReadAloudSettingsPage/g) ?? []).length, 1);
   assert.match(patched, /codexLinuxReadAloudSettingsAliasesV2/);
   assert.match(patched, /function codexLinuxReadAloudSettingsPage\(\)\{return\(0,\$\.jsx\)\(xt/);
+  assert.match(patched, /c=N\(\);/);
+  assert.match(patched, /\(0,\$\.jsx\)\(P,\{id:`settings\.readAloud\.title`/);
   assert.doesNotMatch(patched, /\(0,\$\.jsx\)\(St,\{children:\(0,\$\.jsx\)\(W/);
+});
+
+test("general settings patch refreshes a current read aloud row with a stale settings-row alias", () => {
+  const source = [
+    'import{s as e}from"./src-BRBmN298.js";',
+    'import{t as xt}from"./settings-content-layout-Dm8iYKt_.js";',
+    'import{a as st,r as K,t as ct}from"./dropdown-CTBRoADH.js";',
+    'import{r as J}from"./settings-row-FLzCWFCC.js";',
+    'import{t as Tg}from"./toggle-Cl52yCxI.js";',
+    'import{i as M,l as N,s as P}from"./lib-MoKmYgcO.js";',
+    'import{t as F}from"./clsx-DF17mjDp.js";',
+    'import{n as I,y as L}from"./app-shell-state-Dq2x034T.js";',
+    'import{n as m}from"./vscode-api-DjORcpSo.js";',
+    'import{n as v,t as y}from"./jsx-runtime-CiQ1k8xo.js";',
+    "var Q=e(v(),1),$=y();",
+    "function Gn(){return (0,$.jsx)(K,{label:`Service tier`})}",
+    "/*codexLinuxReadAloudSettingsAliasesV2*/function codexLinuxReadAloudPaceValue(e){return 1.05}function codexLinuxReadAloudSettingsRow(){let e=!0,l=`codex-linux-read-aloud-enabled`,d=`codex-linux-read-aloud-kokoro-speed`;return(0,$.jsxs)($.Fragment,{children:[(0,$.jsx)(K,{label:l,description:`settings.general.readAloud.chooseFolder settings.general.readAloud.help`,control:null}),e?(0,$.jsx)(K,{label:d,description:`settings.general.readAloud.help`,control:null}):null]})}function codexLinuxReadAloudSettingsPage(){return(0,$.jsx)(xt,{children:(0,$.jsx)(codexLinuxReadAloudSettingsRow,{})})}",
+    "function nr(){return (0,$.jsx)(J,{label:`General`})}",
+    "export{or as i,ar as n,nr as r,Tr as t,codexLinuxReadAloudSettingsPage as ReadAloudSettings};",
+  ].join("");
+  const patched = twice(applyGeneralSettingsPatch, source);
+  assert.equal((patched.match(/function codexLinuxReadAloudSettingsRow/g) ?? []).length, 1);
+  assert.equal((patched.match(/function codexLinuxReadAloudSettingsPage/g) ?? []).length, 1);
+  assert.equal((patched.match(/codexLinuxReadAloudSettingsAliasesV2/g) ?? []).length, 1);
+  assert.match(patched, /codexLinuxReadAloudSettingsAliasesV2/);
+  assert.match(patched, /\(0,\$\.jsx\)\(J,\{label:l/);
+  assert.doesNotMatch(patched, /\(0,\$\.jsx\)\(K,\{label:l/);
+  assert.match(patched, /\(0,\$\.jsx\)\(Tg,\{checked:e===!0/);
+  assert.match(patched, /c=N\(\);/);
+  assert.match(patched, /\(0,\$\.jsx\)\(P,\{id:`settings\.general\.readAloud\.label`/);
+  assert.doesNotMatch(patched, /c=F\(\);/);
+  assert.doesNotMatch(patched, /\(0,\$\.jsx\)\(I,\{id:`settings\.(general\.readAloud|readAloud)\./);
+  assert.match(patched, /codexLinuxReadAloudChooseFolderLabel=c\.formatMessage/);
+  assert.doesNotMatch(patched, /m=c\.formatMessage/);
 });
 
 test("general settings wrapper re-exports the read aloud settings page", () => {
@@ -1076,8 +1173,12 @@ test("settings nav patches add a visible read aloud section after computer use",
     "case`computer-use`:z=k.isLoading||m.isLoading;break bb0;",
   ].join("");
   const patchedPage = twice(applySettingsPageNavPatch, page);
-  assert.match(patchedPage, /codexLinuxReadAloudSettingsIcon=e=>/);
-  assert.match(patchedPage, /"read-aloud-settings":codexLinuxReadAloudSettingsIcon/);
+  assert.doesNotMatch(patchedPage, /codexLinuxReadAloudSettingsIcon=e=>/);
+  assert.match(
+    patchedPage,
+    /"read-aloud-settings":\(e=>\{try\{return \(0,Z\.jsxs\)\(`svg`,/,
+  );
+  assert.match(patchedPage, /catch\(t\)\{return oe\(e\)\}\}\)/);
   assert.match(patchedPage, /`computer-use`,`read-aloud-settings`,`data-controls`/);
   assert.match(patchedPage, /`computer-use`,`read-aloud-settings`,`local-environments`/);
   assert.match(patchedPage, /case`read-aloud-settings`:return!0;case`computer-use`/);
@@ -1093,12 +1194,13 @@ test("settings nav patch adds the read aloud icon to the current settings page i
     "case`computer-use`:z=D.isLoading||h.isLoading;break bb0;",
   ].join("");
   const patched = twice(applySettingsPageNavPatch, page);
-  assert.match(patched, /codexLinuxReadAloudSettingsIcon=e=>\(0,\$\.jsxs\)/);
-  assert.doesNotMatch(patched, /codexLinuxReadAloudSettingsIcon=e=>\(0,Z\.jsxs\)/);
+  assert.doesNotMatch(patched, /codexLinuxReadAloudSettingsIcon=e=>/);
   assert.match(
     patched,
-    /"browser-use":me,"computer-use":fe,"read-aloud-settings":codexLinuxReadAloudSettingsIcon,"local-environments":pe/,
+    /"browser-use":me,"computer-use":fe,"read-aloud-settings":\(e=>\{try\{return \(0,\$\.jsxs\)\(`svg`,/,
   );
+  assert.match(patched, /catch\(t\)\{return fe\(e\)\}\}\),"local-environments":pe/);
+  assert.doesNotMatch(patched, /\(0,Z\.jsxs\)/);
   assert.match(patched, /`computer-use`,`read-aloud-settings`,`data-controls`/);
   assert.match(patched, /case`read-aloud-settings`:return!0;case`computer-use`/);
   assert.match(patched, /case`read-aloud-settings`:z=!1;break bb0;case`computer-use`/);
@@ -1123,7 +1225,7 @@ test("settings nav patch adds read aloud visibility before drifted computer-use 
   );
 });
 
-test("settings nav patch defines the read aloud icon before var icon maps", () => {
+test("settings nav patch repairs stale read aloud icon references in var icon maps", () => {
   const page = [
     "var $=i();",
     "var codexLinuxAgentWorkspaceSettingsIcon=e=>(0,$.jsxs)(`svg`,{children:[]});",
@@ -1134,13 +1236,36 @@ test("settings nav patch defines the read aloud icon before var icon maps", () =
     "case`computer-use`:I=T.isLoading||g.isLoading;break bb0;",
   ].join("");
   const patched = twice(applySettingsPageNavPatch, page);
-  assert.match(patched, /var codexLinuxReadAloudSettingsIcon=e=>\(0,\$\.jsxs\)/);
-  assert.ok(
-    patched.indexOf("codexLinuxReadAloudSettingsIcon=e=>") <
-      patched.indexOf('"read-aloud-settings":codexLinuxReadAloudSettingsIcon'),
+  assert.doesNotMatch(patched, /codexLinuxReadAloudSettingsIcon=e=>/);
+  assert.match(
+    patched,
+    /"computer-use":De,"read-aloud-settings":\(e=>\{try\{return \(0,\$\.jsxs\)\(`svg`,/,
   );
+  assert.match(patched, /catch\(t\)\{return De\(e\)\}\}\),"local-environments":Oe/);
   assert.match(patched, /case`read-aloud-settings`:return!0;case`computer-use`/);
   assert.match(patched, /case`read-aloud-settings`:I=!1;break bb0;case`computer-use`/);
+});
+
+test("settings nav patch declares legacy read aloud icon assignments before they can throw", () => {
+  const page = [
+    'import{n as e}from"./rolldown-runtime.js";',
+    "var $=i(),Hn,Xn=e((()=>{Hn=null,codexLinuxReadAloudSettingsIcon=e=>(0,$.jsxs)(`svg`,{children:[]}),Hn={\"browser-use\":me,\"computer-use\":fe,\"read-aloud-settings\":codexLinuxReadAloudSettingsIcon,\"local-environments\":pe}}));",
+    "xe=[`browser-use`,`computer-use`,`data-controls`];",
+    "Se=[{slugs:[`browser-use`,`computer-use`,`local-environments`]}];",
+    "case`computer-use`:return A;",
+    "case`computer-use`:z=D.isLoading||h.isLoading;break bb0;",
+  ].join("");
+  const patched = twice(applySettingsPageNavPatch, page);
+  assert.match(
+    patched,
+    /^import\{n as e\}from"\.\/rolldown-runtime\.js";var codexLinuxReadAloudSettingsIcon;/,
+  );
+  assert.match(patched, /codexLinuxReadAloudSettingsIcon=e=>\(0,\$\.jsxs\)/);
+  assert.match(
+    patched,
+    /"computer-use":fe,"read-aloud-settings":\(e=>\{try\{return \(0,\$\.jsxs\)\(`svg`,/,
+  );
+  assert.match(patched, /catch\(t\)\{return fe\(e\)\}\}\),"local-environments":pe/);
 });
 
 test("app route patch wires read aloud settings to the generated page export", () => {
@@ -1166,6 +1291,39 @@ test("settings asset patch leaves current keybinds settings file alone", () => {
     const patched = fs.readFileSync(asset, "utf8");
     assert.doesNotMatch(patched, /readAloud:"codex-linux-read-aloud-enabled"/);
     assert.doesNotMatch(patched, /label:"Read aloud responses"/);
+    assert.deepEqual(applySettingsAssetPatch(root), { matched: true, changed: 0 });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("settings asset patch adds read aloud controls to generated Linux desktop settings", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-settings-"));
+  try {
+    const assets = path.join(root, "webview", "assets");
+    fs.mkdirSync(assets, { recursive: true });
+    const asset = path.join(assets, "linux-desktop-settings-linux.js");
+    fs.writeFileSync(
+      asset,
+      'var React={Fragment:{}},$={jsx(){},jsxs(){}},KEYS={promptWindow:"codex-linux-prompt-window-enabled",systemTray:"codex-linux-system-tray-enabled",warmStart:"codex-linux-warm-start-enabled",autoUpdateOnExit:"codex-linux-auto-update-on-exit"};function useLinuxSetting(){}function SettingsRow(){}function SettingsSection(){}function SettingsGroup(){}function SettingsPage(){}function Toggle(){}function LinuxToggle(){}function LinuxBuildInfoPanel(){}function LinuxDesktopSettings(){return $.jsx(SettingsPage,{title:"Linux desktop",subtitle:"Launcher, tray, prompt window, and update behavior.",children:$.jsxs("div",{className:"flex flex-col gap-6",children:[$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Updates"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxToggle,{settingKey:KEYS.autoUpdateOnExit,label:"Install updates when you close Codex",description:"When on, a ready update waits for Codex to close and then installs. When off, updates wait until you click Update."})})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Build"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxBuildInfoPanel,{})})})]})]})})}export{LinuxDesktopSettings,LinuxDesktopSettings as default};',
+    );
+
+    assert.deepEqual(applySettingsAssetPatch(root), { matched: true, changed: 1 });
+    const patched = fs.readFileSync(asset, "utf8");
+    assert.match(patched, /readAloud:"codex-linux-read-aloud-enabled"/);
+    assert.match(patched, /readAloudSpeed:"codex-linux-read-aloud-kokoro-speed"/);
+    assert.match(patched, /function LinuxReadAloudSettings\(\)/);
+    assert.match(patched, /title:"Read Aloud"/);
+    assert.match(patched, /label:"Read aloud responses"/);
+    assert.match(patched, /children:"Choose folder"/);
+    assert.match(patched, /children:"Download voice"/);
+    assert.match(patched, /label:"Speech pace"/);
+    assert.match(
+      patched,
+      /\$\.jsx\(LinuxReadAloudSettings,\{\}\),\$\.jsxs\(SettingsSection,\{className:"gap-2",children:\[\$\.jsx\(SettingsSection\.Header,\{title:"Build"/,
+    );
+    assert.doesNotMatch(patched, /LinuxSettingsSection/);
+    assert.doesNotMatch(patched, /LinuxSettingsRow/);
     assert.deepEqual(applySettingsAssetPatch(root), { matched: true, changed: 0 });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -1297,7 +1455,7 @@ test("settings asset patch creates a first-class read aloud settings section", (
     assert.deepEqual(applySettingsAssetPatch(root), { matched: true, changed: 0 });
     assert.match(
       fs.readFileSync(path.join(assets, "settings-page-current.js"), "utf8"),
-      /"read-aloud-settings":codexLinuxReadAloudSettingsIcon/,
+      /"read-aloud-settings":\(e=>\{try\{return \(0,Z\.jsxs\)\(`svg`,/,
     );
     assert.match(
       fs.readFileSync(path.join(assets, "app-main-current.js"), "utf8"),

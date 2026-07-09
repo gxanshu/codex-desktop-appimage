@@ -1,3 +1,5 @@
+**IMPORTANT: THIS PROJECT SUPPORTS ONLY THE LATEST UPSTREAM `CODEX.DMG`. WHEN FIXING UPSTREAM DRIFT, REMOVE OLD DRIFT WORKAROUNDS IN THE SAME PULL REQUEST. DO NOT KEEP LEGACY DMG SHAPES, FALLBACK PATCH PATHS, OR VERSION-SPECIFIC COMPATIBILITY ZOOS AROUND. THE CODE SHOULD TARGET THE CURRENT DMG SO REVIEW, VALIDATION, AND DIAGNOSTICS DO NOT HAVE TO GUESS WHICH UPSTREAM VERSION FAILED.**
+
 # Contributing to Codex Desktop for Linux (AppImage fork)
 
 > **Fork note**: this is a fork of `ilysenko/codex-desktop-linux` that ships only the AppImage and removes the deb/rpm/pacman builders, the `codex-update-manager` daemon, and the on-device rebuild pipeline. CI publishes an AppImage to GitHub Releases daily when the upstream DMG changes. Most of the upstream guidance below about "native packages" and "the updater" no longer applies here — treat it as historical reference for how the upstream project still works. Pull upstream patcher fixes via `git fetch upstream && git merge upstream/main` (see README).
@@ -24,7 +26,9 @@ Please take a moment to understand how this repository is structured before maki
 - `scripts/build-deb.sh`, `scripts/build-rpm.sh`, and `scripts/build-pacman.sh` package an already-generated `codex-app/`.
 - `scripts/install-deps.sh` bootstraps local development dependencies.
 - `updater/` contains the Rust update manager.
-- `scripts/patch-linux-window-ui.js` contains fail-soft ASAR patches for Linux behavior.
+- `scripts/patch-linux-window-ui.js` is the build-facing ASAR patcher CLI. Core
+  patch descriptors live under `scripts/patches/core/`, with implementation
+  helpers under `scripts/patches/impl/`.
 - `codex-app/` and `dist/` are generated artifacts and should not be treated as primary source unless you are intentionally validating generated output.
 
 For repository-specific implementation details, read [`AGENTS.md`](./AGENTS.md) and the relevant sections in [`README.md`](./README.md) before starting work.
